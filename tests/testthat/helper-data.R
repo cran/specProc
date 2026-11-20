@@ -28,6 +28,35 @@ make_xy <- function(n = 40, p = 25, seed = 10) {
   list(x = x, y = y)
 }
 
+# Spectra-like data with three latent variables, and a response linear in
+# them. The test set comes from the same model.
+make_regression <- function(n = 100, p = 200, seed = 1) {
+  set.seed(seed)
+  loadings <- qr.Q(qr(matrix(rnorm(p * 3), p, 3)))
+  latent <- function(m) matrix(rnorm(m * 3), m, 3) %*% diag(c(10, 6, 3))
+  draw <- function(m) {
+    l <- latent(m)
+    list(x = l %*% t(loadings) + matrix(rnorm(m * p, sd = 0.3), m, p),
+         y = drop(l %*% c(0.3, -0.5, 0.8)) + rnorm(m, sd = 0.3))
+  }
+  list(train = draw(n), test = draw(200))
+}
+
+# Two classes lying near different two-dimensional subspaces of a
+# 50-dimensional space; the test set comes from the same model.
+make_simca <- function(n = 40, p = 50, seed = 1) {
+  set.seed(seed)
+  basis_a <- qr.Q(qr(matrix(rnorm(p * 2), p, 2)))
+  basis_b <- qr.Q(qr(matrix(rnorm(p * 2), p, 2)))
+  draw <- function(m) {
+    scores <- function() matrix(rnorm(m * 2), m) %*% diag(c(5, 3))
+    noise <- function() matrix(rnorm(m * p, sd = 0.2), m)
+    list(x = rbind(scores() %*% t(basis_a) + noise(), scores() %*% t(basis_b) + noise() + 1),
+         g = factor(rep(c("a", "b"), each = m)))
+  }
+  list(train = draw(n), test = draw(n))
+}
+
 # Dense reference implementations of the penalized baselines (O(n^3)).
 dense_als <- function(y, lambda, p, max_iter) {
   n <- length(y)

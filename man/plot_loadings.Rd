@@ -14,7 +14,12 @@ plot_loadings(
   spectra = NULL,
   span = 5,
   interactive = FALSE,
-  title = NULL
+  title = NULL,
+  wavelength = NULL,
+  xlab = NULL,
+  ylab = NULL,
+  base_size = 11,
+  linewidth = 0.3
 )
 }
 \arguments{
@@ -51,6 +56,20 @@ is a local extremum. Default is 5.}
 peaks and their candidate lines shown on hover. Default is \code{FALSE}.}
 
 \item{title}{The plot title.}
+
+\item{wavelength}{Optional (\code{NULL} by default). The wavelength range
+\code{c(min, max)} to draw, in nm; the \code{top} largest peaks within it are
+labeled. Needs variables named by wavelength.}
+
+\item{xlab, ylab}{The axis titles. Default are \code{"Wavelength (nm)"} (or
+\code{"Variable"}) and the name of the values drawn. In interactive plots,
+each panel has its own vertical axis title and \code{ylab} is ignored.}
+
+\item{base_size}{The size of the text, in points. Default is 11; the
+peak labels scale with it. Ignored for interactive plots.}
+
+\item{linewidth}{The width of the bars (or, for interactive plots, of the
+line) drawn at each variable. Default is 0.3.}
 }
 \value{
 A ggplot object, or a plotly object if \code{interactive = TRUE}. The
@@ -104,8 +123,8 @@ lines.
 
 \strong{Explained variance.} For a \code{\link[stats:prcomp]{stats::prcomp()}} fit, the percentages in
 the panel titles are shares of the total variance. For \code{\link[=robpca]{robpca()}},
-\code{\link[=rospca]{rospca()}} and \code{\link[=macropca]{macropca()}} fits, which estimate only the \code{k} components,
-they are shares of the variance of these \code{k} components.
+\code{\link[=rospca]{rospca()}} and \code{\link[=macropca]{macropca()}} fits, which estimate only their \code{ncomp}
+components, they are shares of the variance of these components.
 }
 \examples{
 spectra_id <- forageLIBS |> dplyr::select(1:2) |> names()
@@ -115,10 +134,13 @@ set.seed(1)
 fit <- robpca(center(spectra))
 plot_loadings(fit, spectra = spectra)
 plot_loadings(fit, type = "contribution", spectra = spectra)
+# the Ca II H and K lines
+plot_loadings(fit, spectra = spectra, wavelength = c(390, 400), top = 4)
 \donttest{
 # label the peaks with emission lines from the NIST database (needs an
 # internet connection)
-lines <- try(libs_lines(c("Ca I", "Ca II", "K I", "Mg I", "Mg II", "Na I", "C I", "H I")))
+lines <- try(libs_lines(c("Ca I", "Ca II", "K I", "Mg I", "Mg II", "Na I", "C I", "H I"),
+                        timeout = 20))
 if (!inherits(lines, "try-error")) plot_loadings(fit, lines = lines, spectra = spectra)
 }
 

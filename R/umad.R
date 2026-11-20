@@ -29,32 +29,63 @@
 #'
 #' @param x A numeric vector.
 #' @param method A character string specifying the method to use for calculating the correction factor when the number of sample is more than 100. The available options are "hayes" (default) and "williams".
-#' @param drop.na A logical value indicating whether to remove missing values (NA) from the calculations. If `TRUE` (the default), missing values will be removed. If `FALSE`, missing values will be included.
+#' @param drop_na A logical value indicating whether to remove missing values (NA) from the calculations. If `TRUE` (the default), missing values will be removed. If `FALSE`, missing values will be included.
+#' @param drop.na `r lifecycle::badge("deprecated")` Use `drop_na`.
 #'
 #' @return The MAD scale estimate for the input vector `x`.
 #'
 #' @export umad
 #'
 #' @examples
+#' # mad() is unbiased for the standard deviation of a normal distribution
+#' # only in large samples. In 2000 samples of 5 replicate values from a
+#' # standard normal distribution (standard deviation 1), mad() is low by
+#' # about 16% on average, while umad() is unbiased
 #' set.seed(1)
-#' x <- c(stats::rnorm(50), 10, 12)  # two outliers
+#' samples <- replicate(2000, rnorm(5), simplify = FALSE)
+#' est <- data.frame(estimator = rep(c("mad()", "umad()"), each = 2000),
+#'                   value = c(sapply(samples, mad), sapply(samples, umad)))
+#' means <- tapply(est$value, est$estimator, mean)
+#' round(means, 3)
+#' # the estimates from 5 values are skewed: the peak of umad() lies below 1,
+#' # but its mean (solid line) is at 1 (dashed line)
+#' ggplot2::ggplot(est, ggplot2::aes(value, fill = estimator)) +
+#'   ggplot2::geom_density(alpha = 0.4) +
+#'   ggplot2::geom_vline(xintercept = means, colour = c("#b2182b", "#2166ac")) +
+#'   ggplot2::geom_vline(xintercept = 1, linetype = "dashed") +
+#'   ggplot2::scale_fill_manual(values = c("#b2182b", "#2166ac"))
+#'
+#' # the bias of mad() fades as the samples grow: the means of each
+#' # estimator over 1000 samples of n values
+#' set.seed(2)
+#' bias <- sapply(c(3, 5, 10, 30, 100), function(n) {
+#'   s <- replicate(1000, rnorm(n), simplify = FALSE)
+#'   c(n = n, mad = mean(sapply(s, mad)), umad = mean(sapply(s, umad)))
+#' })
+#' round(bias, 3)
+#'
+#' # both are robust: two outliers inflate the standard deviation, but
+#' # neither MAD
+#' set.seed(1)
+#' x <- c(rnorm(50), 10, 12)
+#' sd(x)
+#' mad(x)
 #' umad(x)
-#' stats::mad(x)
-umad <- function(x, method = "hayes", drop.na = TRUE) {
+umad <- function(x, method = "hayes", drop_na = TRUE,
+                 drop.na = deprecated()) {
+  drop_na <- renamed_arg(drop.na, drop_na, "umad", "drop.na", "drop_na")
   if (missing(x)) {
     stop("Missing 'x' argument.")
   }
-  if (!is.numeric(x)) {
-    stop("'x' must be a numeric vector.")
-  }
-  if (!is.logical(drop.na) || length(drop.na) != 1) {
-    stop("'drop.na' must be a single logical value (TRUE or FALSE).")
+  check_numeric_vector(x, "umad")
+  if (!is.logical(drop_na) || length(drop_na) != 1) {
+    stop("'drop_na' must be a single logical value (TRUE or FALSE).")
   }
   if (!is.character(method) || !(method %in% c("hayes", "williams"))) {
     stop("'method' must be either 'hayes' or 'williams'.")
   }
 
-  if (drop.na) {
+  if (drop_na) {
     x <- x[!is.na(x)]
   }
 

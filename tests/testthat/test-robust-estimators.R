@@ -7,7 +7,7 @@ test_that("biweight location is robust and exact for symmetric data", {
   expect_lt(abs(biweight_location(x) - 50), 1.5)
   expect_lt(abs(biweight_location(z)), 0.03)
   expect_equal(biweight_location(c(1, 2, NA, 4, 5)), NA_real_)
-  expect_equal(biweight_location(c(1, 2, NA, 4, 5), drop.na = TRUE), 3)
+  expect_equal(biweight_location(c(1, 2, NA, 4, 5), drop_na = TRUE), 3)
   expect_error(biweight_location(c(1, 1, 1)), "constant")
   expect_error(biweight_location("a"), "numeric")
 })
@@ -45,7 +45,7 @@ test_that("Rousseeuw-Croux estimators are consistent at the normal", {
   expect_equal(rousseeuw_croux(z, "Sn"), 1, tolerance = 0.02)
   expect_equal(rousseeuw_croux(z, "Qn"), 1, tolerance = 0.02)
   expect_equal(rousseeuw_croux(c(1, 2, NA, 5)), NA_real_)
-  expect_type(rousseeuw_croux(c(1, 2, NA, 5, 9), drop.na = TRUE), "double")
+  expect_type(rousseeuw_croux(c(1, 2, NA, 5, 9), drop_na = TRUE), "double")
   expect_error(rousseeuw_croux(c(3, 3, 3)), "constant")
 })
 
@@ -57,6 +57,61 @@ test_that("umad is unbiased at the normal", {
   expect_equal(mean(small), 1, tolerance = 0.02)
   expect_error(umad(1), "greater than 1")
   expect_error(umad(z, method = "x"), "hayes")
+})
+
+test_that("medcouple measures skewness robustly", {
+  expect_equal(medcouple(z), 0, tolerance = 0.02)
+  set.seed(4)
+  e <- stats::rexp(20000)
+  # 1/3 at the exponential distribution (Brys et al. 2004)
+  expect_equal(medcouple(e), 1 / 3, tolerance = 0.02)
+  expect_equal(medcouple(e), robustbase::mc(e, doScale = FALSE))
+  expect_equal(medcouple(-e), -medcouple(e), tolerance = 1e-6)
+  expect_equal(medcouple(3 * e + 2), medcouple(e), tolerance = 1e-6)
+  expect_equal(medcouple(1:9), 0)
+  # a few gross outliers barely change it, unlike the classical skewness
+  x <- c(z[1:1000], rep(50, 20))
+  expect_lt(abs(medcouple(x)), 0.05)
+  expect_gt(moments::skewness(x), 5)
+  expect_true(is.na(medcouple(c(1, 5, NA, 2))))
+  expect_equal(medcouple(c(1, 5, NA, 2), drop_na = TRUE), medcouple(c(1, 5, 2)))
+  expect_true(is.na(medcouple(numeric(0))))
+  expect_true(is.na(medcouple(c(NA_real_, NA_real_), drop_na = TRUE)))
+  expect_equal(medcouple(tapply(e[1:100], rep(1:50, 2), sum)),
+               medcouple(as.vector(tapply(e[1:100], rep(1:50, 2), sum))))
+  expect_error(medcouple("a"), "numeric")
+  expect_error(medcouple(e, drop_na = "yes"), "drop_na")
+  expect_error(medcouple(), "Missing")
+})
+
+test_that("medcouple takes a vector only", {
+  set.seed(5)
+  df <- data.frame(right = stats::rexp(200), left = -stats::rexp(200))
+  expect_error(medcouple(df), "sapply\\(x, medcouple\\)")
+  expect_error(medcouple(as.matrix(df)), "apply\\(x, 2, medcouple\\)")
+  expect_error(medcouple(as.matrix(df[1])), "numeric vector")
+  mc <- sapply(df, medcouple)
+  expect_gt(mc[["right"]], 0.2)
+  expect_lt(mc[["left"]], -0.2)
+})
+
+test_that("the functions of a single variable do not pool the columns of a matrix", {
+  set.seed(6)
+  m <- cbind(a = stats::rexp(60), b = stats::rnorm(60))
+  funs <- c("biweight_location", "biweight_scale", "biweight_midvariance", "umad",
+            "iqr_outliers", "medcouple_weight", "quantile_weight", "zscore", "minmax",
+            "directional_outlyingness", "medcouple")
+  for (f in funs) {
+    fn <- getExportedValue("specProc", f)
+    hint <- paste0("sapply(x, ", f, ") or apply(x, 2, ", f, ")")
+    expect_error(fn(m), hint, fixed = TRUE)
+    expect_error(fn(as.data.frame(m)), hint, fixed = TRUE)
+    expect_error(fn(m[, 1, drop = FALSE]), "numeric vector", fixed = TRUE)
+    # a 1-d array, such as the result of tapply(), is a vector
+    expect_no_error(fn(array(m[, 1])))
+  }
+  expect_equal(biweight_location(array(m[, 1])), biweight_location(m[, 1]))
+  expect_error(iqr_outliers(m, skew = TRUE), "sapply(x, iqr_outliers)", fixed = TRUE)
 })
 
 test_that("tail weights match their values at the normal distribution", {

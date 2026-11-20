@@ -1,8 +1,8 @@
 ---
-title: "1. Fitting emission lines"
+title: "Fitting emission lines"
 output: rmarkdown::html_vignette
 vignette: >
-  %\VignetteIndexEntry{1. Fitting emission lines}
+  %\VignetteIndexEntry{Fitting emission lines}
   %\VignetteEngine{knitr::rmarkdown}
   %\VignetteEncoding{UTF-8}
 ---
@@ -55,21 +55,53 @@ column names are the wavelengths (nm):
 ```{r spectra, fig.height = 3.5}
 forageLIBS |>
   slice(1:3) |>
-  select(Measurement, all_of(names(spectra)[wl > 400 & wl < 410])) |>
-  plot_spectra(id = Measurement)
+  select(-Sample, -all_of(minerals)) |>
+  plot_spectra(id = Measurement, wavelength = c(400, 460), offset = 10000) +
+  scale_x_continuous(breaks = seq(400, 460, 5))
 ```
 
 ## Identifying the lines
 
 `libs_lines()` lists the strongest lines of given species in a wavelength
 range, from the NIST Atomic Spectra Database, and `plot_lines()` marks them
-on a spectrum. `line_finder()` opens an interactive app that does both.
-These functions need an internet connection:
+on a spectrum. `line_finder()` opens an interactive app that does both. In
+the app, the lines of a species picked on the spectrum also build a
+Boltzmann plot, from which outlying lines can be left out, and **Done**
+returns its fit to R (see `vignette("plasma-diagnostics")`). These
+functions need an internet connection:
 
 ```{r identify, eval = FALSE}
 candidates <- libs_lines(c("K I", "Ca I", "Fe I", "Mn I"), wavelength = c(400, 410))
 plot_lines(colMeans(spectra), candidates)
-line_finder(spectra)
+fit <- line_finder(spectra)
+```
+
+Molecules formed in the plasma emit bands. `molecular_bands()` lists the
+heads of the bands of diatomic molecules common in LIBS (CN, C2, CH, OH,
+N2, AlO, CaF, TiO, ...), computed from spectroscopic constants without a
+download. The organic matrix of the forage samples, ablated in air, emits
+the violet system of CN, whose bands are degraded to the violet: each
+rises sharply at its head and fades toward shorter wavelengths. Its
+strongest sequence, the bands with $v' = v''$, has heads from 388.3 to
+385.0 nm:
+
+```{r cn-bands, fig.height = 3.5}
+cn <- molecular_bands("CN", wavelength = c(383, 390))
+cn |>
+  select(v_upper, v_lower, wavelength, degraded, fcf, relative_intensity) |>
+  mutate(across(where(is.double), \(x) round(x, 3))) |>
+  as.data.frame()
+plot_lines(colMeans(spectra), bands = cn, wavelength = c(383, 390), interactive = FALSE)
+```
+
+The measured heads lie about 0.07 nm short of the markers: the wavelength
+axis needs a correction (next section). `molecular_spectrum()` simulates
+the full rotational structure of the bands from a line list of the ExoMol
+database, downloaded on demand:
+
+```{r cn-spectrum, eval = FALSE}
+cn_model <- molecular_spectrum("CN", temperature = 6000, wavelength = c(383, 390),
+                               resolution = 0.1)
 ```
 
 ## Correcting the wavelength axis
@@ -104,7 +136,7 @@ spectra for a clean example:
 
 ```{r corrected}
 calibrated <- apply_calibration(first_detector, wavecal)
-corrected <- baseline_arpls(calibrated, lambda = 1e5, max.iter = 20)$correction
+corrected <- baseline_arpls(calibrated, lambda = 1e5, max_iter = 20)$correction
 wl_corrected <- as.numeric(names(corrected))
 mean_spectrum <- colMeans(corrected)
 
@@ -203,6 +235,83 @@ plot_fit(k_gauss, title = "K I 404.41 and 404.72 nm, Gaussian profiles")
 
 The areas are now determined, and the AIC is lower: prefer the simplest
 profile that describes the data.
+
+The two lines come from the fine-structure levels of the same 5p
+configuration of K I: their separation is known (0.307 nm, from the NIST
+database), and their instrumental and Stark widths are nearly the same.
+`lock_centers = TRUE` keeps the separation of `peaks`, with one shift of
+both lines, and `share_widths = TRUE` gives them one width:
+
+```{r doublet-locked}
+k_locked <- multipeak_fit(doublet, peaks = c(404.414, 404.721), profiles = "gaussian",
+                          lock_centers = TRUE, share_widths = TRUE)
+k_locked$tidied[[1]]
+```
+
+```{r doublet-numbers, include = FALSE}
+term_of <- \(fit, term, column = "estimate") {
+  t <- fit$tidied[[1]]
+  t[[column]][t$term == term]
+}
+free_separation <- term_of(k_gauss, "xc_2") - term_of(k_gauss, "xc_1")
+locked_ratio <- term_of(k_locked, "A_1") / term_of(k_locked, "A_2")
+thin_ratio <- (4 * 1.15e6 / 404.414) / (2 * 1.07e6 / 404.721)
+```
+
+The free fit placed the lines `r round(free_separation, 3)` nm apart, with
+widths of `r round(term_of(k_gauss, "wG_1"), 3)` and
+`r round(term_of(k_gauss, "wG_2"), 3)` nm; with two parameters fewer, the
+standard error of the area of the weaker line drops from
+`r round(term_of(k_gauss, "A_2", "std.error"))` to
+`r round(term_of(k_locked, "A_2", "std.error"))`. The common shift,
+`r round(term_of(k_locked, "shift"), 3)` ±
+`r round(term_of(k_locked, "shift", "std.error"), 3)` nm, is zero within its
+standard error, since the wavelength axis was corrected above; on raw
+spectra, it absorbs the offset of the axis.
+
+`area_ratios` would also fix the ratio of the areas. In an optically thin
+plasma, the ratio of these lines is that of their \(g_k A_{ki} / \lambda\),
+`r round(thin_ratio, 2)` (their upper levels are 2 meV apart). The fitted
+ratio is `r round(locked_ratio, 2)`: the 404.41 nm line, which ends on the
+ground state, is self-absorbed (see `vignette("plasma-diagnostics")`), so
+fixing the ratio would bias the areas. Fix ratios only for optically thin
+lines.
+
+## Instrumental and Doppler widths
+
+The Gaussian width of a line is the instrumental width combined with the
+Doppler width, \(w_G = \sqrt{w_{inst}^2 + w_D^2}\). The instrumental width is
+the width of a line of a low-pressure lamp (mercury, argon), whose Stark and
+Doppler widths are negligible, fitted with a Gaussian profile;
+`doppler_width()` gives the Doppler width from the temperature and the mass
+of the emitter. With the Gaussian width known, `fixed = "wG"` holds it in
+the fit, and only the Lorentzian (Stark) width is fitted. The instrumental
+width of the forage spectrometers is not known, so here is a simulated Al I
+line, with an instrumental width of 0.08 nm and a Stark width of 0.04 nm:
+
+```{r fixed-width}
+x <- seq(395.5, 396.5, by = 0.02)
+set.seed(1)
+y <- voigt_profile(x, y0 = 50, xc = 396.15, wG = 0.08, wL = 0.04, A = 100) +
+  rnorm(length(x), sd = 5)
+al_line <- as_tibble(as.list(set_names(y, x)))
+w_gauss <- sqrt(0.08^2 + doppler_width(396.15, temperature = 9000, mass = "Al")^2)
+w_gauss
+
+free <- peak_fit(al_line, profile = "voigt")$tidied[[1]]
+fixed <- peak_fit(al_line, profile = "voigt", wG = w_gauss, fixed = "wG")$tidied[[1]]
+bind_rows(free = free, fixed = fixed, .id = "fit") |>
+  filter(term %in% c("wG", "wL")) |>
+  select(fit, term, estimate, std.error)
+```
+
+The Doppler width of Al at 9000 K is only
+`r round(doppler_width(396.15, 9000, "Al"), 4)` nm, so the Gaussian width is
+the instrumental width. With both widths free, they trade off against each
+other: the standard error of the Lorentzian width is
+`r round(free$std.error[free$term == "wL"] / fixed$std.error[fixed$term == "wL"], 1)`
+times larger than with the Gaussian width fixed. The fixed width is listed
+without standard error.
 
 ## Fitting every spectrum
 

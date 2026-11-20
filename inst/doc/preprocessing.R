@@ -46,7 +46,7 @@ base <- recipe(K ~ ., data = forageLIBS) |>
 ## ----baseline, fig.height = 3.5-----------------------------------------------
 region <- wl > 276 & wl < 290
 fitted_baselines <- map(c(`1e3` = 1e3, `1e5` = 1e5, `1e7` = 1e7), \(lambda) {
-  unlist(baseline_arpls(spectra[1, ], lambda = lambda, max.iter = 20)$background)[region]
+  unlist(baseline_arpls(spectra[1, ], lambda = lambda, max_iter = 20)$background)[region]
 })
 first_spectrum <- tibble(wavelength = wl[region], counts = unlist(spectra[1, region]))
 
@@ -62,7 +62,7 @@ tibble(wavelength = wl[region], !!!fitted_baselines) |>
 
 ## ----step-baseline------------------------------------------------------------
 corrected <- base |>
-  step_baseline(all_predictors(), lambda = 1e5, options = list(max.iter = 20))
+  step_baseline(all_predictors(), lambda = 1e5, options = list(max_iter = 20))
 
 ## ----corrected-data-----------------------------------------------------------
 corrected_data <- corrected |> prep() |> bake(new_data = NULL)

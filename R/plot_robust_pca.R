@@ -1,4 +1,4 @@
-#' @title Outlier Map of a Robust PCA
+#' @title Outlier Map of a Robust PCA or Robust PLS Model
 #'
 #' @author Christian L. Goueguel
 #'
@@ -8,7 +8,13 @@
 #' [macropca()] or [cellpca()] (Hubert, Rousseeuw and Vanden Branden, 2005).
 #' For [cellpca()], the vertical axis is the norm of the standardized
 #' residuals, as in the enhanced outlier map of Centofanti, Hubert and
-#' Rousseeuw.
+#' Rousseeuw. For a robust calibration model fitted by [rsimpls()] or
+#' [rpcr()], it is by default
+#' the regression outlier map of Hubert and Vanden Branden (2003): the
+#' residual distance (with one response, the absolute standardized residual)
+#' against the score distance. With `map = "score"`, it is the score outlier
+#' map of the predictors: the orthogonal distance of each spectrum to the
+#' model against its score distance, as for a robust PCA.
 #'
 #' @details
 #' The dashed lines are the cut-offs of the two distances. They divide the
@@ -21,9 +27,18 @@
 #'  - **bad leverage** points (top right): far on both counts, the most
 #'    harmful outliers.
 #'
+#' In the regression outlier map of [rsimpls()] or [rpcr()], the top left
+#' region holds
+#' the **vertical outliers**: observations with a typical spectrum but a
+#' large residual, such as a wrong reference value. Bad leverage points have
+#' both an outlying spectrum and a large residual; good leverage points have
+#' an outlying spectrum that the model still fits.
+#'
 #' New observations (`newdata`) are projected onto the model with
-#' [predict()][predict.specproc_robpca] and shown with the calibration
-#' cut-offs, which is how new spectra are screened before prediction.
+#' [predict()][predict.specproc_robpca] (or
+#' [predict()][predict.specproc_rsimpls] for the score outlier map of an
+#' [rsimpls()] or [rpcr()] fit) and shown with the calibration cut-offs,
+#' which is how new spectra are screened before prediction.
 #'
 #' With `relative = TRUE`, each distance is divided by its cut-off (the
 #' reduced score and orthogonal distances), so both cut-offs are at 1
@@ -34,9 +49,10 @@
 #' in every model.
 #'
 #' @param object An object returned by [robpca()], [rospca()],
-#'   [macropca()] or [cellpca()].
+#'   [macropca()], [cellpca()], [rsimpls()] or [rpcr()].
 #' @param newdata Optional new observations to add to the map (a numeric
-#'   matrix or data frame with the calibration variables).
+#'   matrix or data frame with the calibration variables). Not available for
+#'   the regression outlier map of [rsimpls()] and [rpcr()] fits.
 #' @param labels The number of most outlying observations to label (by
 #'   their row names, or row numbers). Default is 3; use 0 for no labels.
 #' @param relative If `TRUE`, plot the reduced distances (divided by their
@@ -48,24 +64,34 @@
 #' @param log If `TRUE`, use logarithmic axes, which spread out the regular
 #'   observations when a few are far away. Zero distances are drawn at the
 #'   smallest positive distance. Default is `FALSE`.
-#' @param colour_by The colors of the points: `"type"` (default), by
+#' @param color_by The colors of the points: `"type"` (default), by
 #'   outlier type, or `"distance"`, by their reduced distance from the
 #'   origin, \eqn{\max(SD/c_{SD}, OD/c_{OD})}, on a rainbow scale from dark
 #'   red (the closest) to blue (the farthest). With `relative = TRUE`, where
 #'   both cut-offs are at 1, yellow marks the cut-offs: dark red through
 #'   orange for the regular observations, then green and blue for the
 #'   outlying ones. Otherwise, the colors spread evenly over the distances.
+#' @param map For [rsimpls()] and [rpcr()] fits, the map to draw:
+#'   `"regression"` (default), the regression outlier map, or `"score"`,
+#'   the score outlier map of the predictors. Not used for robust PCA fits.
 #' @param title The plot title.
 #' @param ... Further arguments passed to [ggplot2::geom_point()] to style
-#'   the points, such as `alpha` (default 0.85), `size` (2.2), `stroke`
-#'   (0.4) or `colour` (the outline, `"black"`). `size` can also be a numeric
+#'   the points, such as `stroke` (default 0.4) or `colour` (the outline,
+#'   `"black"`).
+#' @param xlab,ylab The axis titles. Default are the names of the distances.
+#' @param base_size The size of the text, in points. Default is 11.
+#' @param point_size The size of the points (default 2.2), or a numeric
 #'   vector with one value per sample (the calibration samples, then those
 #'   of `newdata`), such as the concentration of an element, to vary the
 #'   size of the points, with a legend.
+#' @param point_alpha The opacity of the points, between 0 and 1 (default
+#'   0.85).
+#' @param colour_by `r lifecycle::badge("deprecated")` Use `color_by`.
 #'
 #' @return A ggplot object.
 #'
-#' @seealso [robpca()], [rospca()], [macropca()], [plot_cell_map()]
+#' @seealso [robpca()], [rospca()], [macropca()], [rsimpls()], [rpcr()],
+#'   [plot_cell_map()]
 #' @export
 #'
 #' @examples
@@ -79,38 +105,72 @@
 #'
 #' plot_outlier_map(fit, relative = TRUE, shade = TRUE, log = TRUE)
 #' plot_outlier_map(fit, relative = TRUE, shade = TRUE, log = TRUE,
-#' labels = 10, colour_by = "distance")
+#' labels = 10, color_by = "distance", point_alpha = 0.6)
 #'
 plot_outlier_map <- function(object, newdata = NULL, labels = 3, relative = FALSE,
-                             shade = FALSE, log = FALSE, colour_by = c("type", "distance"),
-                             title = NULL, ...) {
-  if (!inherits(object, "specproc_robpca")) {
-    stop("'object' must be returned by robpca(), rospca(), macropca() or cellpca().", call. = FALSE)
+                             shade = FALSE, log = FALSE, title = NULL,
+                             map = c("regression", "score"), ..., color_by = c("type", "distance"),
+                             xlab = NULL, ylab = NULL, base_size = 11, point_size = 2.2,
+                             point_alpha = 0.85, colour_by = deprecated()) {
+  if (!inherits(object, c("specproc_robpca", "specproc_rsimpls", "specproc_rpcr"))) {
+    stop("'object' must be returned by robpca(), rospca(), macropca(), cellpca(), rsimpls() ",
+         "or rpcr().",
+         call. = FALSE)
   }
+  size_label <- rlang::as_label(rlang::enquo(point_size))
   check_count(labels, "labels", lower = 0)
-  colour_by <- match.arg(colour_by)
+  color_by <- match.arg(renamed_arg(colour_by, color_by, "plot_outlier_map", "colour_by",
+                                    "color_by"), c("type", "distance"))
+  map <- match.arg(map)
   check_map_flags(relative, shade, log)
-  ids <- rownames(object$scores) %||% as.character(seq_along(object$sd))
-  df <- data.frame(id = ids, x = object$sd, y = object$od, type = object$outlier_type,
+  check_plot_text(title, xlab, ylab, base_size)
+  style <- list(xlab = xlab, ylab = ylab, base_size = base_size)
+  is_calibration <- inherits(object, c("specproc_rsimpls", "specproc_rpcr"))
+  if (is_calibration && map == "regression") {
+    point <- map_point_args(rlang::enquos(...), length(object$sd), "", point_size, point_alpha,
+                            size_label)
+    return(regression_outlier_map(object, newdata, labels, relative, shade, log, color_by, title,
+                                  point, style))
+  }
+  # the score outlier map of an rsimpls() or rpcr() fit classifies the
+  # observations like a robust PCA, from its score and orthogonal distances
+  if (is_calibration) {
+    ids <- rownames(object$x_scores) %||% as.character(seq_along(object$sd))
+    type <- outlier_type(object$sd, object$od, object$cutoff_sd, object$cutoff_od)
+  } else {
+    ids <- rownames(object$scores) %||% as.character(seq_along(object$sd))
+    type <- object$outlier_type
+  }
+  df <- data.frame(id = ids, x = object$sd, y = object$od, type = type,
                    set = "calibration", stringsAsFactors = FALSE)
   if (!is.null(newdata)) {
-    pred <- stats::predict(object, newdata)
+    if (is_calibration) {
+      pred <- stats::predict(object, newdata, type = "scores")
+      pred$outlier_type <- outlier_type(pred$sd, pred$od, object$cutoff_sd, object$cutoff_od)
+    } else {
+      pred <- stats::predict(object, newdata)
+    }
     new_ids <- rownames(newdata) %||% paste0("new", seq_len(nrow(pred)))
     df <- rbind(df, data.frame(id = new_ids, x = pred$sd, y = pred$od, type = pred$outlier_type,
                                set = "new", stringsAsFactors = FALSE))
   }
-  df$type <- factor(df$type, levels = levels(object$outlier_type))
+  df$type <- factor(df$type, levels = levels(type))
 
   if (is.null(title)) {
-    title <- switch(class(object)[1], specproc_robpca = "ROBPCA", specproc_rospca = "ROSPCA",
-                    specproc_macropca = "MacroPCA", specproc_cellpca = "cellPCA")
-    title <- paste0(title, " outlier map (", object$k, " components)")
+    title <- if (is_calibration) {
+      paste0(calibration_name(object), " score outlier map (", object$ncomp, " components)")
+    } else {
+      paste0(switch(class(object)[1], specproc_robpca = "ROBPCA", specproc_rospca = "ROSPCA",
+                    specproc_macropca = "MacroPCA", specproc_cellpca = "cellPCA"),
+             " outlier map (", object$ncomp, " components)")
+    }
   }
   point <- map_point_args(rlang::enquos(...), nrow(df),
-                          if (!is.null(newdata)) ", calibration then new samples" else "")
+                          if (!is.null(newdata)) ", calibration then new samples" else "",
+                          point_size, point_alpha, size_label)
   distance_map(
     df, cuts = data.frame(level = "cut-off", x = object$cutoff_sd, y = object$cutoff_od),
-    labels = labels, relative = relative, shade = shade, log = log, colour_by = colour_by,
+    labels = labels, relative = relative, shade = shade, log = log, color_by = color_by,
     palette = c(regular = "grey55", `good leverage` = "#1b9e77",
                 `orthogonal outlier` = "#d95f02", `bad leverage` = "#e7298a"),
     # "bad leverage" sits above the OD cut-off rather than in the top right
@@ -122,7 +182,7 @@ plot_outlier_map <- function(object, newdata = NULL, labels = 3, relative = FALS
     } else {
       c("Orthogonal distance", "Reduced orthogonal distance")
     },
-    title = title, point = point, show_set = !is.null(newdata)
+    title = title, point = point, show_set = !is.null(newdata), style = style
   )
 }
 
@@ -196,6 +256,13 @@ plot_outlier_map <- function(object, newdata = NULL, labels = 3, relative = FALS
 #' @param tol The largest distance, in nm, between a region and a line it
 #'   matches. Default is 0.1.
 #' @param title The plot title. Default is "MacroPCA cell map" or "cellPCA cell map".
+#' @param wavelength Optional (`NULL` by default). The wavelength range
+#'   `c(min, max)` to show, in nm: the columns within it (of `columns`, if
+#'   given). Needs variables named by wavelength.
+#' @param xlab,ylab The axis titles of the map. Default are
+#'   `"Wavelength (nm)"` (or `"Variable"`) and `"Observation"`, with the
+#'   order of the rows.
+#' @param base_size The size of the text, in points. Default is 11.
 #'
 #' @return A patchwork (ggplot2) object.
 #'
@@ -204,24 +271,27 @@ plot_outlier_map <- function(object, newdata = NULL, labels = 3, relative = FALS
 #'
 #' @examples
 #' \donttest{
-#' spectra_id <- forageLIBS |> dplyr::select(1:2) |> names()
-#' minerals <- forageLIBS |> dplyr::select(3:14) |> names()
+#' data(forageLIBS)
+#' # the 380-430 nm window (Ca II H and K lines), faster than all the channels
+#' wl <- suppressWarnings(as.numeric(names(forageLIBS)))
+#' spectra <- forageLIBS[which(wl > 380 & wl < 430)]
 #' set.seed(1)
-#' fit <- forageLIBS |>
-#'   dplyr::select(-dplyr::all_of(c(spectra_id, minerals))) |>
-#'   center() |>
-#'   macropca(k = 3)
+#' fit <- macropca(center(spectra), ncomp = 3)
 #'
 #' if (requireNamespace("patchwork", quietly = TRUE)) {
 #'   plot_cell_map(fit, order = "cluster")
+#'   # the Ca II H and K lines
+#'   plot_cell_map(fit, wavelength = c(390, 400), order = "od")
 #' }
 #' }
 #'
 plot_cell_map <- function(object, rows = NULL, columns = NULL, resolution = c(200, 400),
                           order = c("data", "od", "cluster"), profile = TRUE, spectra = NULL,
                           threshold = 0.1, labels = 5, lines = NULL, tol = 0.1,
-                          title = NULL) {
+                          title = NULL, wavelength = NULL, xlab = NULL, ylab = NULL,
+                          base_size = 11) {
   check_macropca(object)
+  check_plot_text(title, xlab, ylab, base_size)
   title <- title %||% paste(if (inherits(object, "specproc_cellpca")) "cellPCA" else "MacroPCA",
                             "cell map")
   order <- match.arg(order)
@@ -233,7 +303,7 @@ plot_cell_map <- function(object, rows = NULL, columns = NULL, resolution = c(20
   check_count(labels, "labels", lower = 0)
   rlang::check_installed("patchwork", reason = "to combine the panels of the cell map.")
   heading <- split_title(title)
-  cells <- cell_map_data(object, rows, columns)
+  cells <- cell_map_data(object, rows, columns, wavelength_window(wavelength))
   check_region_args(threshold, lines, tol, cells$has_wavelength)
 
   # signed intensity of each cell: 0 unless flagged
@@ -251,7 +321,7 @@ plot_cell_map <- function(object, rows = NULL, columns = NULL, resolution = c(20
     cluster = cell_map_cluster(cell, col_id)
   )
   blocks <- cell_map_blocks(cell[o, , drop = FALSE], cells$wavelength, col_id, resolution[1])
-  map <- cell_map_panel(blocks, cells$ids[o], cells$has_wavelength, order)
+  map <- cell_map_panel(blocks, cells$ids[o], cells$has_wavelength, order, xlab, ylab, base_size)
   strip <- cell_map_strip(cells$type[o])
   x_limits <- attr(blocks, "extent")[1:2]
   map <- map + ggplot2::scale_x_continuous(limits = x_limits, expand = c(0, 0))
@@ -271,7 +341,7 @@ plot_cell_map <- function(object, rows = NULL, columns = NULL, resolution = c(20
     spectrum <- mean_spectrum(spectra, cells$variables)
   }
   regions <- find_flagged_regions(cells, threshold, lines, tol)
-  top <- cell_map_profile(cells, spectrum, regions, threshold, labels, x_limits)
+  top <- cell_map_profile(cells, spectrum, regions, threshold, labels, x_limits, base_size)
   patchwork::wrap_plots(top, patchwork::plot_spacer(), map, strip,
                         ncol = 2, widths = c(1, 0.025),
                         heights = if (labels > 0 && nrow(regions) > 0) c(1.6, 4) else c(1, 4)) +
@@ -315,13 +385,12 @@ plot_cell_map <- function(object, rows = NULL, columns = NULL, resolution = c(20
 #'
 #' @examples
 #' \donttest{
-#' spectra_id <- forageLIBS |> dplyr::select(1:2) |> names()
-#' minerals <- forageLIBS |> dplyr::select(3:14) |> names()
+#' data(forageLIBS)
+#' # the 380-430 nm window (Ca II H and K lines), faster than all the channels
+#' wl <- suppressWarnings(as.numeric(names(forageLIBS)))
+#' spectra <- forageLIBS[which(wl > 380 & wl < 430)]
 #' set.seed(1)
-#' fit <- forageLIBS |>
-#'   dplyr::select(-dplyr::all_of(c(spectra_id, minerals))) |>
-#'   center() |>
-#'   macropca(k = 3)
+#' fit <- macropca(center(spectra), ncomp = 3)
 #'
 #' flagged_regions(fit)
 #' }
@@ -343,6 +412,37 @@ flagged_regions <- function(object, threshold = 0.1, rows = NULL, columns = NULL
 # distance within the model (x) against a distance to the model (y), with
 # their cut-offs dividing the map into four types of observations.
 
+# The regression outlier map of an rsimpls() or rpcr() fit: residual distance
+# against score distance (Hubert and Vanden Branden, 2003).
+regression_outlier_map <- function(object, newdata, labels, relative, shade, log, color_by,
+                                   title, point, style) {
+  if (!is.null(newdata)) {
+    stop("'newdata' is not used in the regression outlier map of rsimpls() and rpcr() ",
+         "fits: residuals need the responses. Use `map = \"score\"` to screen new spectra.",
+         call. = FALSE)
+  }
+  ids <- rownames(object$x_scores) %||% as.character(seq_along(object$sd))
+  df <- data.frame(id = ids, x = object$sd, y = object$rd, type = object$outlier_type,
+                   set = "calibration", stringsAsFactors = FALSE)
+  if (is.null(title)) {
+    title <- paste0(calibration_name(object), " outlier map (", object$ncomp, " components)")
+  }
+  distance_map(
+    df, cuts = data.frame(level = "cut-off", x = object$cutoff_sd, y = object$cutoff_rd),
+    labels = labels, relative = relative, shade = shade, log = log, color_by = color_by,
+    palette = c(regular = "grey55", `good leverage` = "#1b9e77",
+                `vertical outlier` = "#d95f02", `bad leverage` = "#e7298a"),
+    regions = c("good leverage", "vertical outliers", "bad leverage"),
+    x_lab = c("Score distance", "Reduced score distance"),
+    y_lab = if (length(object$intercept) == 1) {
+      c("Absolute standardized residual", "Reduced absolute standardized residual")
+    } else {
+      c("Residual distance", "Reduced residual distance")
+    },
+    title = title, point = point, show_set = FALSE, style = style
+  )
+}
+
 check_map_flags <- function(relative, shade, log) {
   for (arg in c("relative", "shade", "log")) {
     value <- get(arg)
@@ -352,27 +452,42 @@ check_map_flags <- function(relative, shade, log) {
   }
 }
 
-# The arguments of geom_point() given in `...` of a distance map, with their
-# defaults. A `size` with one value per sample is returned apart (`sizes`,
-# with the expression `size_name` as the legend title), to be mapped.
-map_point_args <- function(dots, n, size_hint = "") {
+# The arguments of geom_point() of a distance map: `point_size` and
+# `point_alpha`, and those given in `...` (where `size` and `alpha` replace
+# them). A size with one value per sample is returned apart (`sizes`, with
+# the expression `size_name` as the legend title), to be mapped.
+map_point_args <- function(dots, n, size_hint = "", point_size = 2.2, point_alpha = 0.85,
+                           size_label = "point_size") {
   args <- lapply(dots, rlang::eval_tidy)
   if (length(args) && (is.null(names(args)) || any(names(args) == ""))) {
-    stop("The arguments in '...' must be named, such as 'alpha = 0.5'.", call. = FALSE)
+    stop("The arguments in '...' must be named, such as 'stroke = 0.8'.", call. = FALSE)
   }
   names(args)[names(args) == "color"] <- "colour"
-  sizes <- size_name <- NULL
-  if (length(args$size) > 1) {
-    if (!is.numeric(args$size) || length(args$size) != n) {
-      stop("`size` must be a number, or a numeric vector with one value per sample (",
-           n, size_hint, ").", call. = FALSE)
-    }
-    sizes <- args$size
-    size_name <- rlang::as_label(dots$size)
+  size_arg <- "point_size"
+  if (!is.null(args$size)) {
+    point_size <- args$size
+    size_arg <- "size"
+    size_label <- rlang::as_label(dots$size)
     args$size <- NULL
   }
-  args <- utils::modifyList(list(colour = "black", size = 2.2, stroke = 0.4, alpha = 0.85), args)
-  if (!is.null(sizes)) args$size <- NULL
+  if (!is.null(args$alpha)) {
+    point_alpha <- args$alpha
+    args$alpha <- NULL
+  }
+  check_alpha(point_alpha, "point_alpha")
+  sizes <- size_name <- NULL
+  if (length(point_size) > 1) {
+    if (!is.numeric(point_size) || length(point_size) != n) {
+      stop("`", size_arg, "` must be a number, or a numeric vector with one value per sample (",
+           n, size_hint, ").", call. = FALSE)
+    }
+    sizes <- point_size
+    size_name <- size_label
+  } else {
+    check_size(point_size, size_arg)
+    args$size <- point_size
+  }
+  args <- utils::modifyList(list(colour = "black", stroke = 0.4, alpha = point_alpha), args)
   list(args = args, sizes = sizes, size_name = size_name)
 }
 
@@ -384,8 +499,9 @@ map_point_args <- function(dots, n, size_hint = "") {
 #  - regions: the names of the three outlying regions (bottom right, top
 #    left, top right), shown with `shade`.
 #  - x_lab, y_lab: the axis titles of the distances and of the reduced ones.
-distance_map <- function(df, cuts, labels, relative, shade, log, colour_by, palette, regions,
-                         x_lab, y_lab, title, point, show_set) {
+#  - style: the axis titles given by the user (xlab, ylab), and base_size.
+distance_map <- function(df, cuts, labels, relative, shade, log, color_by, palette, regions,
+                         x_lab, y_lab, title, point, show_set, style) {
   top <- cuts[nrow(cuts), ]
   cut_x <- max(top$x, .Machine$double.eps)
   cut_y <- max(top$y, .Machine$double.eps)
@@ -401,8 +517,9 @@ distance_map <- function(df, cuts, labels, relative, shade, log, colour_by, pale
   }
   if (!is.null(point$sizes)) df$.size <- point$sizes
 
-  x_lab <- x_lab[[1 + relative]]
-  y_lab <- y_lab[[1 + relative]]
+  x_lab <- style$xlab %||% x_lab[[1 + relative]]
+  y_lab <- style$ylab %||% y_lab[[1 + relative]]
+  base_size <- style$base_size
   if (relative) {
     df$x <- df$x / cut_x
     df$y <- df$y / cut_y
@@ -421,16 +538,13 @@ distance_map <- function(df, cuts, labels, relative, shade, log, colour_by, pale
     }
   }
   cuts$level <- factor(cuts$level, levels = rev(cuts$level))
-  # labels on the right of the points, or on their left near the right edge
-  x_range <- range(c(df$x, cuts$x), finite = TRUE)
-  df$.hjust <- ifelse(df$x > x_range[1] + 0.85 * diff(x_range), 1.2, -0.2)
   shade_x <- cuts$x[nrow(cuts)]
   shade_y <- cuts$y[nrow(cuts)]
 
   # keys of the absent types too
   point_args <- utils::modifyList(list(show.legend = c(fill = TRUE, linetype = FALSE)), point$args)
   point_args$mapping <- ggplot2::aes(fill = .data$type, shape = .data$set)
-  if (colour_by == "distance") {
+  if (color_by == "distance") {
     point_args$mapping$fill <- quote(.data$radius)
     # the farthest points on top
     df <- df[order(df$radius), , drop = FALSE]
@@ -451,7 +565,8 @@ distance_map <- function(df, cuts, labels, relative, shade, log, colour_by, pale
                          alpha = rects$alpha, fill = "grey20", inherit.aes = FALSE) +
       ggplot2::annotate("text", x = c(Inf, -Inf, Inf), y = c(-Inf, Inf, shade_y), label = regions,
                         hjust = c(1.05, -0.05, 1.05), vjust = c(-0.6, 1.6, -0.6),
-                        size = 3, fontface = "italic", colour = "grey35")
+                        size = 0.77 * base_size / ggplot2::.pt, fontface = "italic",
+                        colour = "grey35")
   }
   # the highest level dashed, the others dotted, dot-dashed, ...
   linetypes <- stats::setNames(
@@ -464,9 +579,8 @@ distance_map <- function(df, cuts, labels, relative, shade, log, colour_by, pale
     ggplot2::geom_hline(data = cuts, ggplot2::aes(yintercept = .data$y, linetype = .data$level),
                         colour = "grey30", key_glyph = "path") +
     do.call(ggplot2::geom_point, point_args) +
-    ggplot2::geom_text(ggplot2::aes(label = .data$label, hjust = .data$.hjust), size = 3, vjust = -0.4,
-                       colour = "grey20", na.rm = TRUE) +
-    (if (colour_by == "type") {
+    repel_labels(base_size) +
+    (if (color_by == "type") {
       ggplot2::scale_fill_manual(values = palette, drop = FALSE, name = NULL,
                                  guide = ggplot2::guide_legend(order = 1, override.aes = list(shape = 21, size = 2.5)))
     } else {
@@ -484,9 +598,9 @@ distance_map <- function(df, cuts, labels, relative, shade, log, colour_by, pale
                                                          keywidth = ggplot2::unit(0.9, "cm"))
                                    } else "none") +
     ggplot2::labs(x = x_lab, y = y_lab, title = title) +
-    ggplot2::theme_bw() +
+    ggplot2::theme_bw(base_size = base_size) +
     ggplot2::theme(legend.position = "bottom") +
-    compact_legend()
+    compact_legend(base_size)
   if (!is.null(point$size_name)) {
     p <- p + ggplot2::theme(legend.box = "vertical")
     p <- p + ggplot2::scale_size_continuous(range = c(1.2, 6), name = point$size_name, breaks = three_breaks,
@@ -505,6 +619,18 @@ distance_map <- function(df, cuts, labels, relative, shade, log, colour_by, pale
   finish_title(p +
     do.call(ggplot2::scale_x_continuous, x_args) +
     do.call(ggplot2::scale_y_continuous, y_args))
+}
+
+# Labels of the points of a distance map (column `label`, empty for the
+# unlabelled points), moved apart so that they overlap neither each other
+# nor the points, with a segment to their point when they are moved far.
+# The fixed seed gives the same layout at each drawing.
+repel_labels <- function(base_size = 11) {
+  ggrepel::geom_text_repel(ggplot2::aes(label = .data$label),
+                           size = 0.77 * base_size / ggplot2::.pt, colour = "grey20",
+                           box.padding = 0.35, point.padding = 0.2, min.segment.length = 0.2,
+                           segment.colour = "grey50", max.overlaps = Inf, seed = 1,
+                           na.rm = TRUE)
 }
 
 # Rainbow of the distances of plot_outlier_map(): dark red at the origin,
@@ -557,14 +683,25 @@ check_region_args <- function(threshold, lines, tol, has_wavelength) {
 }
 
 # The selected residuals and flags, with the row ids, outlier types,
-# variable names, wavelengths and detector segments.
-cell_map_data <- function(object, rows, columns) {
+# variable names, wavelengths and detector segments. `window` keeps the
+# columns within a wavelength range.
+cell_map_data <- function(object, rows, columns, window = NULL) {
   resid <- object$std_resid
   n <- nrow(resid)
   ids <- rownames(resid) %||% as.character(seq_len(n))
   variables <- colnames(resid) %||% attr(object, "variables") %||% as.character(seq_len(ncol(resid)))
   keep_rows <- cell_map_index(rows, ids, n, "rows")
   keep_cols <- cell_map_index(columns, variables, ncol(resid), "columns")
+  if (!is.null(window)) {
+    all_wavelengths <- names_to_wavelength(variables)
+    if (is.null(all_wavelengths)) {
+      stop("'wavelength' needs variables named by wavelength.", call. = FALSE)
+    }
+    keep_cols <- keep_cols[in_window(all_wavelengths[keep_cols], window)]
+    if (length(keep_cols) < 2) {
+      stop("Fewer than 2 variables in the 'wavelength' range.", call. = FALSE)
+    }
+  }
   variables <- variables[keep_cols]
   wavelength <- names_to_wavelength(variables)
   has_wavelength <- length(wavelength) == length(variables)
@@ -682,7 +819,8 @@ find_flagged_regions <- function(cells, threshold, lines, tol) {
   out
 }
 
-cell_map_panel <- function(blocks, ids, has_wavelength, order) {
+cell_map_panel <- function(blocks, ids, has_wavelength, order, xlab = NULL, ylab = NULL,
+                           base_size = 11) {
   n <- length(ids)
   if (n <= 40) {
     breaks <- seq_len(n)
@@ -703,10 +841,11 @@ cell_map_panel <- function(blocks, ids, has_wavelength, order) {
                                   name = "Flagged cells",
                                   guide = ggplot2::guide_colourbar(order = 1, barwidth = 8)) +
     ggplot2::scale_y_reverse(breaks = breaks, labels = labels, expand = c(0, 0)) +
-    ggplot2::labs(x = if (has_wavelength) "Wavelength (nm)" else "Variable",
-                  y = switch(order, data = "Observation", od = "Observation (by decreasing OD)",
-                             cluster = "Observation (clustered)")) +
-    ggplot2::theme_bw() +
+    ggplot2::labs(x = xlab %||% if (has_wavelength) "Wavelength (nm)" else "Variable",
+                  y = ylab %||% switch(order, data = "Observation",
+                                       od = "Observation (by decreasing OD)",
+                                       cluster = "Observation (clustered)")) +
+    ggplot2::theme_bw(base_size = base_size) +
     ggplot2::theme(panel.grid = ggplot2::element_blank())
 }
 
@@ -723,7 +862,8 @@ cell_map_strip <- function(type) {
     ggplot2::theme_void()
 }
 
-cell_map_profile <- function(cells, spectrum, regions, threshold, labels, x_limits) {
+cell_map_profile <- function(cells, spectrum, regions, threshold, labels, x_limits,
+                             base_size = 11) {
   n <- nrow(cells$resid)
   wavelength <- cells$wavelength
   up <- colSums(cells$flagged & cells$resid > 0, na.rm = TRUE) / n
@@ -756,24 +896,22 @@ cell_map_profile <- function(cells, spectrum, regions, threshold, labels, x_limi
     digits <- if (cells$has_wavelength) wavelength_digits(wavelength) else 0L
     shown$label <- ifelse(is.na(shown$species), format_wavelength(shown$peak, digits),
                           paste(shown$species, format_wavelength(shown$line_wavelength, 2)))
-    # horizontal labels, spread apart by their width (for plots about 10
-    # inches wide) and kept inside the panel
-    half <- 0.0033 * nchar(shown$label) * diff(x_limits)
-    shown$x <- spread_positions(shown$peak, 2 * max(half) + 0.005 * diff(x_limits))
-    shown$x <- pmin(pmax(shown$x, x_limits[1] + half), x_limits[2] - half)
+    # horizontal labels beyond the peaks, moved apart along the wavelength
+    # axis by ggrepel (inside the panel), with a leader line to their peak
     lower <- shown$direction == "lower"
     shown$y0 <- ifelse(lower, -down[match(shown$peak, wavelength)], up[match(shown$peak, wavelength)])
     shown$y <- ifelse(lower, -1, 1) * (pmax(abs(shown$y0), threshold) + 0.12 * top_share)
     shown$vjust <- ifelse(lower, 1, 0)
-    room <- data.frame(x = shown$x, y = shown$y + ifelse(lower, -1, 1) * 0.3 * top_share)
+    shown$fontface <- ifelse(is.na(shown$species), "plain", "bold")
+    room <- data.frame(x = shown$peak, y = shown$y + ifelse(lower, -1, 1) * 0.3 * top_share)
     p <- p +
-      ggplot2::geom_segment(data = shown, ggplot2::aes(x = .data$peak, xend = .data$x,
-                                                       y = .data$y0, yend = .data$y),
-                            colour = "grey55", linewidth = 0.25) +
-      ggplot2::geom_text(data = shown, ggplot2::aes(x = .data$x, y = .data$y, label = .data$label,
-                                                    vjust = .data$vjust),
-                         size = 2.6, colour = "grey15",
-                         fontface = ifelse(is.na(shown$species), "plain", "bold")) +
+      ggrepel::geom_text_repel(data = shown,
+                               ggplot2::aes(x = .data$peak, y = .data$y0, label = .data$label,
+                                            vjust = .data$vjust, fontface = .data$fontface),
+                               nudge_y = shown$y - shown$y0, direction = "x",
+                               size = 0.67 * base_size / ggplot2::.pt,
+                               colour = "grey15", segment.colour = "grey55", min.segment.length = 0,
+                               max.overlaps = Inf, seed = 1) +
       ggplot2::geom_blank(data = room, ggplot2::aes(x = .data$x, y = .data$y))
   }
   p +
@@ -782,8 +920,14 @@ cell_map_profile <- function(cells, spectrum, regions, threshold, labels, x_limi
     ggplot2::scale_x_continuous(limits = x_limits, expand = c(0, 0)) +
     ggplot2::scale_y_continuous(labels = function(v) scales::percent(abs(v))) +
     ggplot2::labs(x = NULL, y = "Flagged") +
-    ggplot2::theme_bw() +
+    ggplot2::theme_bw(base_size = base_size) +
     ggplot2::theme(axis.text.x = ggplot2::element_blank(),
                    axis.ticks.x = ggplot2::element_blank(),
                    panel.grid.minor = ggplot2::element_blank())
 }
+
+# Name of a robust calibration model in plot titles.
+calibration_name <- function(object) {
+  if (inherits(object, "specproc_rpcr")) "RPCR" else "RSIMPLS"
+}
+

@@ -23,10 +23,13 @@ error, in K;
 \item \code{r_squared}: the coefficient of determination of the fit;
 \item \code{points}: a tibble with the abscissa \code{x} (eV) and ordinate \code{y} of each
 line;
-\item \code{fit}: the \code{lm} fit of \code{y} on \code{x}.
+\item \code{fit}: the \code{lm} fit of \code{y} on \code{x};
+\item \code{lines}: the lines of the plot.
 }
 
-Use \code{\link[=plot_boltzmann]{plot_boltzmann()}} to draw the plot.
+Use \code{\link[=plot_boltzmann]{plot_boltzmann()}} to draw the plot, and \code{\link[=plasma_uncertainty]{plasma_uncertainty()}} to
+propagate the uncertainties of the intensities and of the atomic data to
+the temperature.
 }
 \description{
 Estimates the excitation temperature of a plasma in local thermodynamic
@@ -45,8 +48,8 @@ slope, \eqn{T = -1/(k_B\,\mathrm{slope})}, and its standard error from
 that of the slope.
 
 The intensities must be corrected for the spectral response of the
-instrument, and the lines must be optically thin (see
-\code{\link[=self_absorption]{self_absorption()}}). A wide range of upper-level energies gives a more
+instrument (see \code{\link[=response_calibration]{response_calibration()}}), and the lines must be
+optically thin (see \code{\link[=self_absorption]{self_absorption()}}). A wide range of upper-level energies gives a more
 precise temperature. Atomic data (\eqn{A_{ki}}, \eqn{g_k}, \eqn{E_k}) can
 be taken from the NIST Atomic Spectra Database
 (\url{https://physics.nist.gov/PhysRefData/ASD/lines_form.html}).

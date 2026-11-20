@@ -11,11 +11,11 @@
 #' @details
 #' By default, the axes are the first two columns named like embedding
 #' coordinates (`UMAP1`, `PC1`, `Comp1`, ...; the name followed by a
-#' number), or else the first two numeric columns. A numeric `colour` uses
+#' number), or else the first two numeric columns. A numeric `color_by` uses
 #' a continuous viridis scale, other types a discrete palette.
 #'
 #' With `ellipse = TRUE`, a confidence ellipse is drawn for each group of a
-#' discrete `colour` (or for all the samples otherwise), with
+#' discrete `color_by` (or for all the samples otherwise), with
 #' [ConfidenceEllipse::confidence_ellipse()], at each level of `conf_level`
 #' (0.975 by default). It covers the region expected to hold that share of
 #' the samples of the group if they follow a
@@ -31,7 +31,7 @@
 #'
 #' With `hotelling = "all"`, the ellipses of Hotelling's \eqn{T^2} at each
 #' level of `conf_level` (97.5% by default) are drawn for all the samples,
-#' and the samples beyond the limit at the highest level of \eqn{T^2} on `k`
+#' and the samples beyond the limit at the highest level of \eqn{T^2} on `ncomp`
 #' components are counted in the subtitle, circled in red with
 #' `flag = TRUE` and labeled with `label` (each independently of the other):
 #' the classical outlier limits of a score plot. For a PCA model ([stats::prcomp()], [robpca()], [rospca()] or
@@ -41,16 +41,16 @@
 #' semi-axes \eqn{\sqrt{\lambda_a L}} for the limit \eqn{L}. The limit is
 #' the F (or Beta) limit of [hotelling_t2()] for a [stats::prcomp()] fit, and
 #' the chi-square quantile of ROBPCA for a robust fit, whose flagged samples
-#' are then the leverage points of [plot_outlier_map()] (with `k` its
+#' are then the leverage points of [plot_outlier_map()] (with `ncomp` its
 #' number of components and `conf_level = 0.975`). The scores of the
 #' outlying samples then do not inflate or tilt the ellipses. For other
 #' embeddings, \eqn{T^2} is computed from the mean and covariance of the
 #' samples (with [hotelling_t2()] and [HotellingEllipse::ellipseCoord()]).
-#' With `hotelling = "group"`, each group of a discrete `colour` gets its own
+#' With `hotelling = "group"`, each group of a discrete `color_by` gets its own
 #' ellipses and limits, from its mean and covariance, which flags the samples
 #' atypical of their own group. The ellipses are labeled with their level
 #' (instead of a legend), and drawn for the two components shown, while the
-#' limits use `k` components, so with `k > 2` a flagged sample can lie inside
+#' limits use `ncomp` components, so with `ncomp > 2` a flagged sample can lie inside
 #' the ellipses. With `ellipse = TRUE`, the confidence ellipses are always
 #' computed from the samples shown. Without groups, `ellipse = TRUE` and
 #' `hotelling = "all"` would draw two ellipses of all the samples: only the
@@ -60,23 +60,34 @@
 #' PCA or PLS; on a UMAP
 #' map, whose distances are not meaningful, prefer `ellipse`.
 #'
-#' **Style.** The panel is grey outside the outermost ellipse (of \eqn{T^2}, or of each group) and white
-#' inside, so that the samples beyond the limits stand out, with no grid and
-#' a fixed `aspect_ratio` (0.7 by default; `NULL` lets the plot fill the
-#' space), and thin light grey lines through the origin (when it lies in the
-#' range of the samples, as for centered scores). Without ellipses, the
-#' panel is white.
+#' **Style.** The panel is grey outside the outermost ellipse (of
+#' \eqn{T^2}, or of each group) and white inside, so that the samples beyond
+#' the limits stand out (`panel = "white"` for a white panel), with no grid
+#' and a fixed `aspect_ratio` (0.7 by default; `NULL` lets the plot fill the
+#' space, `"equal"` gives both axes the same scale), and thin light grey
+#' lines through the origin (when it lies in the range of the samples, as for
+#' centered scores). Without ellipses, the panel is white. The groups of a
+#' discrete `color_by` also get their own point shapes (`shapes`), and the axes
+#' plain numbers. A caption says what the ellipses and limits are (their
+#' level, distribution and estimates), which readers cannot tell from the
+#' plot.
+#'
+#' **Publication figures.** Make the plot at its printed size, with
+#' `base_size` set to the text size of the journal, for example
+#' `ggsave("scores.pdf", p, width = 85, height = 75, units = "mm")` with
+#' `base_size = 8` for a single column.
 #'
 #' **Axes.** For a [stats::prcomp()] fit or a robust PCA, the axis titles
 #' give the share of the variance of each component: of the total variance
-#' for [stats::prcomp()], and of the variance of the `k` components of the
+#' for [stats::prcomp()], and of the variance of the components of the
 #' model for [robpca()], [rospca()] and [macropca()], which estimate only
 #' these. With groups, the ellipses (confidence, or \eqn{T^2} with
 #' `hotelling = "group"`) are filled with the color of their group.
 #'
-#' **Point size.** `size` is a number, or a numeric variable (a column of
-#' `data` or a vector with one value per sample), such as the concentration
-#' of an element, which sets the size of each point, with a legend.
+#' **Point size.** `point_size` is a number, or a numeric variable (a column
+#' of `data` or a vector with one value per sample), such as the
+#' concentration of an element, which sets the size of each point, with a
+#' legend.
 #'
 #' **Biplot.** With `biplot = TRUE` (for a [stats::prcomp()] fit or a robust
 #' PCA), the loadings of the two components are drawn over the scores: all
@@ -101,11 +112,13 @@
 #'   [rospca()] or [macropca()].
 #' @param x,y The columns of the axes, unquoted or as strings. By default,
 #'   the first two embedding coordinates (see details).
-#' @param colour The variable coloring the points: a column of `data`
+#' @param color_by The variable coloring the points: a column of `data`
 #'   (unquoted or as a string), or a vector with one value per sample.
-#' @param size The size of the points: a number (default 2), or a numeric
-#'   column of `data` or vector with one value per sample to vary it.
-#' @param alpha The opacity of the points.
+#' @param point_size The size of the points: a number, or a numeric column
+#'   of `data` or vector with one value per sample to vary it. Default is 2
+#'   at a `base_size` of 11, scaled with `base_size`.
+#' @param point_alpha The opacity of the points, between 0 and 1. Default is
+#'   0.8.
 #' @param ellipse A logical: draw confidence ellipses (`FALSE`, default).
 #'   Needs the ConfidenceEllipse package.
 #' @param conf_level The confidence level(s) of the ellipses, confidence
@@ -116,12 +129,13 @@
 #'   chi-square) or `"hotelling"`.
 #' @param hotelling Hotelling's \eqn{T^2} ellipses and outliers: `"none"`
 #'   (default), `"all"` (all samples) or `"group"` (within the groups of a
-#'   discrete `colour`). Needs the HotellingEllipse package (1.3.0 or
+#'   discrete `color_by`). Needs the HotellingEllipse package (1.3.0 or
 #'   later).
-#' @param k The number of components of \eqn{T^2}: the two axes, then the
+#' @param ncomp The number of components of \eqn{T^2}: the two axes, then the
 #'   next embedding coordinates. Default is 2.
 #' @param t2_method The distribution of the \eqn{T^2} limits: `"f"`
-#'   (default) or `"beta"` (see [hotelling_t2()]).
+#'   (default), `"beta"` or `"new"` (see [hotelling_t2()]). Ignored for a
+#'   robust PCA, whose limit is the chi-square quantile of ROBPCA.
 #' @param flag A logical: circle in red the samples beyond the \eqn{T^2}
 #'   limit (`FALSE`, default).
 #' @param label The labels of the samples beyond the \eqn{T^2} limit,
@@ -133,8 +147,33 @@
 #' @param biplot_top The number of loadings drawn as labeled arrows.
 #'   Default is 10.
 #' @param aspect_ratio The ratio of the height to the width of the panel.
-#'   Default is 0.7; `NULL` lets the panel fill the plot.
+#'   Default is 0.7; `NULL` lets the panel fill the plot; `"equal"` gives
+#'   the two axes the same scale, so that the distances between the samples
+#'   are not distorted (for scores in the same units).
 #' @param title The plot title.
+#' @param legend_title The title of the legend of `color_by`. Default is its
+#'   name; give it with units, such as `"K (%)"`.
+#' @param palette The colors of `color_by`: `NULL` (default: Dark2 for up to 8
+#'   groups, viridis for a numeric variable), the name of a viridis palette
+#'   (`"viridis"`, `"magma"`, `"cividis"`, ...) or a vector of colors.
+#' @param shapes A logical: give each group of a discrete `color_by` its own
+#'   point shape (up to 6 groups), so that the groups stay apart in grayscale
+#'   (`TRUE`, default).
+#' @param legend The position of the legend: `"right"` (default), `"bottom"`,
+#'   `"top"`, `"inside"` (the top right corner of the panel) or `"none"`.
+#' @param panel `"shaded"` (default), the panel grey outside the outermost
+#'   ellipse and white inside, or `"white"`.
+#' @param caption `TRUE` (default), a caption saying what the ellipses and
+#'   limits are; `FALSE`, no caption; or a caption of your own.
+#' @param base_size The size of the text, in points. Default is 11; use the
+#'   text size of the journal (often 7 to 9 points) for a figure saved at its
+#'   printed size. The points (unless `point_size` is a number), lines and
+#'   labels scale with it.
+#' @param xlab,ylab The axis titles. Default are the names of the axes, with
+#'   the variance they explain for a PCA.
+#' @param colour,size,alpha `r lifecycle::badge("deprecated")` Use
+#'   `color_by`, `point_size` and `point_alpha`.
+#' @param k `r lifecycle::badge("deprecated")` Use `ncomp`.
 #'
 #' @return A ggplot object.
 #' @seealso [hotelling_t2()], [plot_outlier_map()], [plot_loadings()], [robpca()]
@@ -149,8 +188,23 @@
 #'   set.seed(1)
 #'   forageLIBS[which(wl > 380 & wl < 430)] |>
 #'     center() |>
-#'     robpca(k = 2) |>
+#'     robpca(ncomp = 2) |>
 #'     plot_embedding(hotelling = "all", flag = FALSE, label = TRUE)
+#' }
+#'
+#' # PCA of the K I lines, the samples grouped by potassium level, for a
+#' # journal column
+#' if (rlang::is_installed("ConfidenceEllipse")) {
+#'   data(forageLIBS)
+#'   wl <- suppressWarnings(as.numeric(names(forageLIBS)))
+#'   pca <- stats::prcomp(forageLIBS[which(wl > 760 & wl < 772)])
+#'   level <- cut(forageLIBS$K, 3, labels = c("Low K", "Mid K", "High K"))
+#'   p <- plot_embedding(pca, color_by = level, ellipse = TRUE, legend_title = "Potassium",
+#'                       legend = "bottom", base_size = 8)
+#'   p
+#'   # saved at that size (here in the temporary directory)
+#'   ggplot2::ggsave(file.path(tempdir(), "scores.pdf"), p, width = 85, height = 80,
+#'                   units = "mm")
 #' }
 #'
 #' \donttest{
@@ -163,20 +217,42 @@
 #'     embed::step_umap(recipes::all_predictors(), neighbors = 15) |>
 #'     recipes::prep() |>
 #'     recipes::bake(new_data = NULL)
-#'   plot_embedding(umap, colour = Species, title = "UMAP of the iris flowers")
+#'   plot_embedding(umap, color_by = Species, title = "UMAP of the iris flowers")
 #' }
 #' }
 #'
-plot_embedding <- function(data, x = NULL, y = NULL, colour = NULL, size = 2, alpha = 0.8,
+plot_embedding <- function(data, x = NULL, y = NULL, color_by = NULL, point_size = NULL,
+                           point_alpha = 0.8,
                            ellipse = FALSE, conf_level = 0.975, robust = FALSE,
-                           distribution = "normal", hotelling = "none", k = 2,
+                           distribution = "normal", hotelling = "none", ncomp = 2,
                            t2_method = "f", flag = FALSE, label = NULL, biplot = FALSE,
-                           biplot_top = 10,
-                           aspect_ratio = 0.7, title = NULL) {
+                           biplot_top = 10, aspect_ratio = 0.7, title = NULL,
+                           legend_title = NULL, palette = NULL, shapes = TRUE,
+                           legend = c("right", "bottom", "top", "inside", "none"),
+                           panel = c("shaded", "white"), caption = TRUE, base_size = 11,
+                           xlab = NULL, ylab = NULL, colour = deprecated(), size = deprecated(),
+                           alpha = deprecated(), k = deprecated()) {
+  ncomp <- renamed_arg(k, ncomp, "plot_embedding", "k", "ncomp")
   df <- embedding_data(data)
   variance <- embedding_variance(data)
-  colour_quo <- rlang::enquo(colour)
-  size_quo <- rlang::enquo(size)
+  # the former colour, size and alpha (tidy-evaluated, so tested with missing())
+  user_env <- rlang::caller_env()
+  colour_quo <- rlang::enquo(color_by)
+  if (!missing(colour)) {
+    lifecycle::deprecate_warn("0.9.0", "plot_embedding(colour)", "plot_embedding(color_by)",
+                              user_env = user_env)
+    colour_quo <- rlang::enquo(colour)
+  }
+  size_quo <- rlang::enquo(point_size)
+  size_arg <- "point_size"
+  if (!missing(size)) {
+    lifecycle::deprecate_warn("0.9.0", "plot_embedding(size)", "plot_embedding(point_size)",
+                              user_env = user_env)
+    size_quo <- rlang::enquo(size)
+    size_arg <- "size"
+  }
+  point_alpha <- renamed_arg(alpha, point_alpha, "plot_embedding", "alpha", "point_alpha",
+                             user_env = user_env)
   x <- embedding_column(rlang::enquo(x), df, "x")
   y <- embedding_column(rlang::enquo(y), df, "y")
   if (is.null(x) || is.null(y)) {
@@ -187,18 +263,34 @@ plot_embedding <- function(data, x = NULL, y = NULL, colour = NULL, size = 2, al
   if (is.na(x) || is.na(y) || x == y) {
     stop("'data' needs two numeric columns for the axes; give `x` and `y`.", call. = FALSE)
   }
-  check_number(alpha, "alpha", lower = 0, upper = 1, lower_open = TRUE)
+  check_alpha(point_alpha, "point_alpha")
+  check_label(xlab, "xlab")
+  check_label(ylab, "ylab")
   check_flag(ellipse, "ellipse")
   check_flag(robust, "robust")
   check_flag(biplot, "biplot")
   check_flag(flag, "flag")
   check_count(biplot_top, "biplot_top", lower = 0)
-  if (!is.null(aspect_ratio)) check_number(aspect_ratio, "aspect_ratio", lower = 0, lower_open = TRUE)
+  check_flag(shapes, "shapes")
+  check_number(base_size, "base_size", lower = 0, lower_open = TRUE)
+  legend <- match.arg(legend)
+  panel <- match.arg(panel)
+  if (!is.null(palette)) check_palette(palette)
+  if (!(isTRUE(caption) || isFALSE(caption) ||
+        (is.character(caption) && length(caption) == 1 && !is.na(caption)))) {
+    stop("'caption' must be TRUE, FALSE or a character string.", call. = FALSE)
+  }
+  equal <- identical(aspect_ratio, "equal")
+  if (!is.null(aspect_ratio) && !equal) {
+    check_number(aspect_ratio, "aspect_ratio", lower = 0, lower_open = TRUE)
+  }
+  # the sizes of the points, lines and labels follow the text
+  scale <- base_size / 11
   ellipse_level <- check_conf_level(conf_level)
   t2_level <- ellipse_level
   distribution <- match.arg(distribution, c("normal", "hotelling"))
   hotelling <- match.arg(hotelling, c("none", "all", "group"))
-  t2_method <- match.arg(t2_method, c("f", "beta"))
+  t2_method <- match.arg(t2_method, c("f", "beta", "new"))
   # a UMAP map (embed::step_umap()): its coordinates are not linear scores,
   # so it has no meaningful origin and no T-squared limits
   umap <- all(grepl("^UMAP_?[0-9]+$", c(x, y), ignore.case = TRUE))
@@ -208,10 +300,14 @@ plot_embedding <- function(data, x = NULL, y = NULL, colour = NULL, size = 2, al
     hotelling <- "none"
   }
 
-  colour_info <- embedding_values(colour_quo, df, "colour")
+  colour_info <- embedding_values(colour_quo, df, "color_by")
   colour_values <- colour_info$values
-  colour_name <- colour_info$name
-  size_info <- embedding_size(size_quo, df)
+  colour_name <- legend_title %||% colour_info$name
+  size_info <- embedding_size(size_quo, df, size_arg)
+  # a number given in `point_size` is the size of the points; the default,
+  # and a number in the former `size`, scale with the text
+  point_size <- if (is.null(size_info$constant)) 2 * scale else if (size_arg == "size")
+    size_info$constant * scale else size_info$constant
   label_quo <- rlang::enquo(label)
   label_expr <- rlang::quo_get_expr(label_quo)
   show_labels <- !(is.null(label_expr) || isFALSE(label_expr))
@@ -227,7 +323,7 @@ plot_embedding <- function(data, x = NULL, y = NULL, colour = NULL, size = 2, al
   if (!is.null(size_info$values)) plot_df$.size <- size_info$values
   grouped <- !is.null(colour_values) && !is.numeric(colour_values)
   if (hotelling == "group" && !grouped) {
-    stop("`hotelling = \"group\"` needs a discrete `colour` to define the groups.", call. = FALSE)
+    stop("`hotelling = \"group\"` needs a discrete `color_by` to define the groups.", call. = FALSE)
   }
 
   # ellipses first: their insides are white, the rest of the panel grey
@@ -248,30 +344,31 @@ plot_embedding <- function(data, x = NULL, y = NULL, colour = NULL, size = 2, al
         ggplot2::geom_polygon(data = ellipses, ggplot2::aes(.data$x, .data$y, colour = .data$.colour,
                                                             fill = .data$.colour,
                                                             group = interaction(.data$.colour, .data$.level)),
-                              alpha = fill_alpha, linewidth = 0.5, inherit.aes = FALSE,
+                              alpha = fill_alpha, linewidth = 0.5 * scale, inherit.aes = FALSE,
                               show.legend = FALSE)
       } else {
         ggplot2::geom_polygon(data = ellipses, ggplot2::aes(.data$x, .data$y, group = .data$.level),
-                              colour = "grey40", fill = "grey60", alpha = fill_alpha, linewidth = 0.5,
-                              inherit.aes = FALSE)
+                              colour = "grey40", fill = "grey60", alpha = fill_alpha,
+                              linewidth = 0.5 * scale, inherit.aes = FALSE)
       }))
     }
   }
   t2 <- NULL
+  model <- NULL
   if (hotelling != "none") {
-    check_count(k, "k", lower = 2)
+    check_count(ncomp, "ncomp", lower = 2)
     t2_cols <- unique(c(x, y, embedding_components(df, sum(vapply(df, is.numeric, logical(1))))))
-    if (length(t2_cols) < k) {
-      stop("'data' has fewer than ", k, " numeric columns for the T-squared.", call. = FALSE)
+    if (length(t2_cols) < ncomp) {
+      stop("'data' has fewer than ", ncomp, " numeric columns for the T-squared.", call. = FALSE)
     }
     by_group <- hotelling == "group"
-    model <- if (by_group) NULL else model_t2_parts(data, t2_cols[seq_len(k)], x, y)
+    model <- if (by_group) NULL else model_t2_parts(data, t2_cols[seq_len(ncomp)], x, y)
     if (!is.null(model)) {
       # the T-squared of the PCA model: its eigenvalues, centered at 0
       t2 <- model_t2_flags(model, t2_level, t2_method)
       limits <- model_t2_ellipses(model, x, y, t2_level, t2_method)
     } else {
-      t2 <- hotelling_t2(df, columns = t2_cols[seq_len(k)],
+      t2 <- hotelling_t2(df, columns = t2_cols[seq_len(ncomp)],
                          group = if (by_group) colour_values else NULL, conf_level = t2_level,
                          method = t2_method)
       t2$.flag <- t2[[paste0("outlier_", conf_label(max(t2_level)))]]
@@ -292,30 +389,30 @@ plot_embedding <- function(data, x = NULL, y = NULL, colour = NULL, size = 2, al
         ggplot2::geom_path(data = limits, ggplot2::aes(.data$x, .data$y, colour = .data$.colour,
                                                        linetype = .data$limit,
                                                        group = interaction(.data$.colour, .data$limit)),
-                           linewidth = 0.5, inherit.aes = FALSE, show.legend = FALSE)
+                           linewidth = 0.5 * scale, inherit.aes = FALSE, show.legend = FALSE)
       } else {
         ggplot2::geom_path(data = limits, ggplot2::aes(.data$x, .data$y, linetype = .data$limit),
-                           colour = "grey30", linewidth = 0.5, inherit.aes = FALSE)
+                           colour = "grey30", linewidth = 0.5 * scale, inherit.aes = FALSE)
       }, ggplot2::scale_linetype_manual(values = t2_linetypes(t2_level), guide = "none")))
       # the limits are labeled on the ellipses (at their top), not in a legend
       tops <- t2_label_positions(limits, by_group)
       layers <- c(layers, list(if (by_group) {
         ggplot2::geom_text(data = tops, ggplot2::aes(.data$x, .data$y, label = .data$limit,
                                                      colour = .data$.colour),
-                           hjust = -0.1, vjust = -0.3, size = 2.5, inherit.aes = FALSE,
+                           hjust = -0.1, vjust = -0.3, size = 2.5 * scale, inherit.aes = FALSE,
                            show.legend = FALSE)
       } else {
         ggplot2::geom_text(data = tops, ggplot2::aes(.data$x, .data$y, label = .data$limit),
-                           hjust = -0.1, vjust = -0.3, size = 2.5, colour = "grey30",
+                           hjust = -0.1, vjust = -0.3, size = 2.5 * scale, colour = "grey30",
                            inherit.aes = FALSE)
       }))
     }
   }
 
   p <- ggplot2::ggplot(plot_df, ggplot2::aes(.data$.x, .data$.y))
-  shapes <- do.call(rbind, inside)
-  if (!is.null(shapes)) {
-    p <- p + ggplot2::geom_polygon(data = shapes, ggplot2::aes(.data$x, .data$y, group = .data$.shape),
+  outer <- if (panel == "shaded") do.call(rbind, inside)
+  if (!is.null(outer)) {
+    p <- p + ggplot2::geom_polygon(data = outer, ggplot2::aes(.data$x, .data$y, group = .data$.shape),
                                    fill = "white", colour = NA, inherit.aes = FALSE)
   }
   for (layer in layers) p <- p + layer
@@ -333,32 +430,44 @@ plot_embedding <- function(data, x = NULL, y = NULL, colour = NULL, size = 2, al
   if (biplot) {
     loadings <- embedding_loadings(data, x, y, plot_df, biplot_top)
     p <- p + ggplot2::geom_point(data = loadings$all, ggplot2::aes(.data$x, .data$y),
-                                 colour = "grey45", size = 0.6, alpha = 0.35, inherit.aes = FALSE)
+                                 colour = "grey45", size = 0.6 * scale, alpha = 0.35,
+                                 inherit.aes = FALSE)
   }
+  n_groups <- if (grouped) length(unique(stats::na.omit(colour_values))) else 0
+  # a shape per group, so that the groups stay apart in grayscale
+  by_shape <- shapes && grouped && n_groups <= 6
   point_aes <- ggplot2::aes()
   if (!is.null(colour_values)) point_aes$colour <- quote(.data$.colour)
+  if (by_shape) point_aes$shape <- quote(.data$.colour)
   if (!is.null(size_info$values)) point_aes$size <- quote(.data$.size)
-  point_args <- list(mapping = point_aes, alpha = alpha)
+  point_args <- list(mapping = point_aes, alpha = point_alpha)
   if (is.null(colour_values)) point_args$colour <- "#1f4e79"
-  if (is.null(size_info$values)) point_args$size <- size_info$constant
+  if (is.null(size_info$values)) point_args$size <- point_size
   p <- p + do.call(ggplot2::geom_point, point_args)
   if (!is.null(colour_values)) {
-    p <- p + if (is.numeric(colour_values)) {
-      ggplot2::scale_colour_viridis_c(name = colour_name)
-    } else if (length(unique(colour_values)) <= 8) {
+    p <- p + if (!is.null(palette)) {
+      palette_scale(palette, discrete = !is.numeric(colour_values),
+                    aesthetics = if (is.numeric(colour_values)) "colour" else c("colour", "fill"),
+                    name = colour_name, n = n_groups)
+    } else if (is.numeric(colour_values)) {
+      ggplot2::scale_colour_viridis_c(name = colour_name, end = 0.9)
+    } else if (n_groups <= 8) {
       ggplot2::scale_colour_brewer(name = colour_name, palette = "Dark2",
                                    aesthetics = c("colour", "fill"))
     } else {
       ggplot2::scale_colour_discrete(name = colour_name, aesthetics = c("colour", "fill"))
     }
+    if (by_shape) {
+      p <- p + ggplot2::scale_shape_manual(name = colour_name, values = c(16, 17, 15, 18, 3, 4))
+    }
     if (!is.numeric(colour_values)) {
       # keys of one size, whatever the size of the points
-      p <- p + ggplot2::guides(colour = ggplot2::guide_legend(override.aes = list(size = 2.5)),
+      p <- p + ggplot2::guides(colour = ggplot2::guide_legend(override.aes = list(size = 2.5 * scale)),
                                fill = "none")
     }
   }
   if (!is.null(size_info$values)) {
-    p <- p + ggplot2::scale_size_continuous(range = c(1, 6), name = size_info$name,
+    p <- p + ggplot2::scale_size_continuous(range = c(1, 6) * scale, name = size_info$name,
                                             breaks = three_breaks)
   }
   if (!is.null(loadings)) {
@@ -366,13 +475,14 @@ plot_embedding <- function(data, x = NULL, y = NULL, colour = NULL, size = 2, al
     if (nrow(top) > 0) {
       p <- p +
         ggplot2::geom_segment(data = top, ggplot2::aes(x = 0, y = 0, xend = .data$x, yend = .data$y),
-                              colour = "#7f0000", linewidth = 0.4, inherit.aes = FALSE,
-                              arrow = ggplot2::arrow(length = ggplot2::unit(0.15, "cm"))) +
-        ggplot2::geom_segment(data = top[top$moved, , drop = FALSE],
-                              ggplot2::aes(x = .data$x, y = .data$y, xend = .data$lx, yend = .data$ly),
-                              colour = "#7f000080", linewidth = 0.2, inherit.aes = FALSE) +
-        ggplot2::geom_text(data = top, ggplot2::aes(.data$lx, .data$ly, label = .data$label),
-                           colour = "#7f0000", size = 2.6, inherit.aes = FALSE)
+                              colour = "#7f0000", linewidth = 0.4 * scale, inherit.aes = FALSE,
+                              arrow = ggplot2::arrow(length = ggplot2::unit(0.15 * scale, "cm"))) +
+        # labels at the arrow tips, moved apart by ggrepel
+        ggrepel::geom_text_repel(data = top[top$labeled, , drop = FALSE],
+                                 ggplot2::aes(.data$x, .data$y, label = .data$label),
+                                 colour = "#7f0000", size = 2.6 * scale, segment.colour = "#7f000080",
+                                 min.segment.length = 0.2, max.overlaps = Inf, seed = 1,
+                                 inherit.aes = FALSE)
     }
   }
   # the samples beyond the limit: circled (flag) and labeled (label), independently
@@ -381,46 +491,111 @@ plot_embedding <- function(data, x = NULL, y = NULL, colour = NULL, size = 2, al
     out$.label <- if (is.null(label_values)) t2$sample[t2$.flag] else
       label_values[t2$sample[t2$.flag]]
     if (flag) {
-      circle <- if (is.null(size_info$values)) size_info$constant + 2.5 else 7
+      circle <- if (is.null(size_info$values)) point_size + 2.5 * scale else 7 * scale
       p <- p +
         ggplot2::geom_point(data = out, ggplot2::aes(.data$.x, .data$.y), shape = 21, size = circle,
-                            colour = "#c0392b", stroke = 0.8, inherit.aes = FALSE)
+                            colour = "#c0392b", stroke = 0.8 * scale, inherit.aes = FALSE)
     }
     if (show_labels) {
-      p <- p + ggplot2::geom_text(data = out, ggplot2::aes(.data$.x, .data$.y, label = .data$.label),
-                                  vjust = -1.1, size = 3, colour = "#c0392b", inherit.aes = FALSE)
+      # moved apart by ggrepel, away from all the samples (unlabeled ones
+      # have an empty label)
+      labeled <- plot_df
+      labeled$.label <- ""
+      labeled$.label[t2$sample[t2$.flag]] <- as.character(out$.label)
+      p <- p + ggrepel::geom_text_repel(data = labeled,
+                                        ggplot2::aes(.data$.x, .data$.y, label = .data$.label),
+                                        size = 3 * scale, colour = "#c0392b", box.padding = 0.4,
+                                        segment.colour = "#c0392b80", min.segment.length = 0.2,
+                                        max.overlaps = Inf, seed = 1, na.rm = TRUE,
+                                        inherit.aes = FALSE)
     }
   }
   subtitle <- if (!is.null(t2)) {
-    sprintf("Hotelling T\u00b2 (%d components%s): %d sample(s) beyond the %s%% limit",
-            k, if (hotelling == "group") ", within groups" else "", sum(t2$.flag),
-            conf_label(max(t2_level)))
+    n_flag <- sum(t2$.flag)
+    sprintf("Hotelling T\u00b2 (%d components%s): %d %s beyond the %s%% limit",
+            ncomp, if (hotelling == "group") ", within groups" else "", n_flag,
+            if (n_flag == 1) "sample" else "samples", conf_label(max(t2_level)))
   }
   if (!is.null(loadings)) {
     fx <- loadings$factor[["x"]]
     fy <- loadings$factor[["y"]]
     p <- p +
-      ggplot2::scale_x_continuous(sec.axis = ggplot2::sec_axis(~ . / fx, name = paste(x, "loading"))) +
-      ggplot2::scale_y_continuous(sec.axis = ggplot2::sec_axis(~ . / fy, name = paste(y, "loading")))
+      ggplot2::scale_x_continuous(labels = plain_numbers, sec.axis = ggplot2::sec_axis(
+        ~ . / fx, name = paste(x, "loading"), labels = plain_numbers)) +
+      ggplot2::scale_y_continuous(labels = plain_numbers, sec.axis = ggplot2::sec_axis(
+        ~ . / fy, name = paste(y, "loading"), labels = plain_numbers))
+  } else {
+    p <- p + ggplot2::scale_x_continuous(labels = plain_numbers) +
+      ggplot2::scale_y_continuous(labels = plain_numbers)
+  }
+  if (equal) {
+    p <- p + ggplot2::coord_fixed(ratio = 1)
+  }
+  caption_text <- if (isTRUE(caption)) {
+    embedding_caption(ellipse, ellipse_level, grouped, robust, distribution, t2, hotelling, ncomp,
+                      t2_level, t2_method, robust_model = isTRUE(model$robust), flag = flag,
+                      biplot = !is.null(loadings), umap = umap,
+                      shaded = panel == "shaded" && !is.null(outer))
+  } else if (is.character(caption)) {
+    caption
   }
   # grey outside the ellipses, white inside
   p <- p +
-    ggplot2::labs(x = axis_title(x, variance), y = axis_title(y, variance), title = title,
-                  subtitle = subtitle) +
-    ggplot2::theme_grey() +
+    ggplot2::labs(x = xlab %||% axis_title(x, variance), y = ylab %||% axis_title(y, variance),
+                  title = title,
+                  subtitle = subtitle, caption = caption_text) +
+    ggplot2::theme_grey(base_size = base_size) +
     ggplot2::theme(
-      aspect.ratio = aspect_ratio,
+      aspect.ratio = if (equal) NULL else aspect_ratio,
       panel.grid = ggplot2::element_blank(),
-      panel.background = ggplot2::element_rect(fill = if (is.null(shapes)) "white" else "grey90",
+      panel.background = ggplot2::element_rect(fill = if (is.null(outer)) "white" else "grey90",
                                                colour = "black", linewidth = 0.3),
       legend.key = ggplot2::element_rect(fill = "white", colour = NA),
-      legend.position = "right"
+      plot.caption = ggplot2::element_text(hjust = 0, colour = "grey30", size = ggplot2::rel(0.8)),
+      plot.caption.position = "plot"
     ) +
-    compact_legend()
+    legend_theme(legend) +
+    compact_legend(base_size)
   finish_title(p)
 }
 
 # ---- internals ---------------------------------------------------------------
+
+# The caption: what the ellipses and the limits are, and how to read the plot.
+embedding_caption <- function(ellipse, levels, grouped, robust, distribution, t2, hotelling, ncomp,
+                              t2_level, t2_method, robust_model, flag, biplot, umap, shaded) {
+  pct <- function(l) paste0(paste(conf_label(l), collapse = " and "), "%")
+  parts <- character()
+  if (ellipse) {
+    parts <- c(parts, paste0(
+      "Ellipses: ", pct(levels), " confidence region", if (grouped || length(levels) > 1) "s",
+      " of ", if (grouped) "each group" else "the samples", ", bivariate normal, from the ",
+      if (robust) "robust (MCD) ", "mean and covariance (",
+      if (distribution == "hotelling") "Hotelling's T\u00b2 quantile" else "chi-square quantile", ")."
+    ))
+  }
+  if (!is.null(t2)) {
+    limit <- if (robust_model) {
+      "the chi-square quantile of ROBPCA (Hubert et al., 2005)"
+    } else {
+      switch(t2_method, f = "F distribution (Jackson, 1991)",
+             beta = "Beta distribution of the calibration samples (Tracy et al., 1992)",
+             new = "F distribution of a new sample")
+    }
+    parts <- c(parts, paste0(
+      "Hotelling's T\u00b2 limit", if (length(t2_level) > 1) "s", " at ", pct(t2_level), " on ", ncomp,
+      " components", if (hotelling == "group") ", within each group", ": ", limit, "."
+    ))
+    if (flag) parts <- c(parts, "Circled: the samples beyond the limit.")
+  }
+  if (biplot) parts <- c(parts, "Arrows: the loadings, read on the top and right axes.")
+  if (shaded) parts <- c(parts, "Grey: outside the outermost ellipse.")
+  if (umap) parts <- c(parts, "On a UMAP map, only the neighborhoods are meaningful.")
+  if (length(parts) == 0) {
+    return(NULL)
+  }
+  paste(strwrap(paste(parts, collapse = " "), width = 80), collapse = "\n")
+}
 
 # Legend labels and line types of the T-squared ellipses: the highest level
 # solid, the others dashed, dotted, ...
@@ -439,8 +614,16 @@ hotelling_ellipses <- function(plot_df, by_group, levels, method) {
   # contours T2 = limit, rotated to the covariance of the two components
   ellipse_of <- function(d) {
     do.call(rbind, lapply(seq_along(levels), function(i) {
-      e <- as.data.frame(HotellingEllipse::ellipseCoord(d[c(".x", ".y")], conf.limit = levels[i],
-                                                        method = method))
+      e <- as.data.frame(HotellingEllipse::ellipseCoord(
+        d[c(".x", ".y")], conf.limit = levels[i], method = if (method == "new") "f" else method
+      ))
+      if (method == "new") {
+        # the limit of a new sample is the F limit times (n + 1) / n
+        center <- colMeans(d[c(".x", ".y")])
+        grow <- sqrt((nrow(d) + 1) / nrow(d))
+        e$x <- center[[1]] + (e$x - center[[1]]) * grow
+        e$y <- center[[2]] + (e$y - center[[2]]) * grow
+      }
       e$limit <- factor(labels[i], levels = labels)
       e
     }))
@@ -508,7 +691,7 @@ model_t2_ellipses <- function(model, x, y, levels, method) {
 
 # Share of the variance of each component of a PCA fit (named like the
 # score columns), or NULL: of the total variance for a prcomp fit, of the
-# variance of the k components for a robust fit.
+# variance of the ncomp components for a robust fit.
 embedding_variance <- function(data) {
   if (inherits(data, "prcomp")) {
     v <- data$sdev^2
@@ -544,11 +727,11 @@ three_breaks <- function(limits) {
 }
 
 # Smaller legend text, titles and keys, closer together.
-compact_legend <- function() {
+compact_legend <- function(base_size = 11) {
   ggplot2::theme(
-    legend.text = ggplot2::element_text(size = 8),
-    legend.title = ggplot2::element_text(size = 9),
-    legend.key.size = ggplot2::unit(0.35, "cm"),
+    legend.text = ggplot2::element_text(size = 8 * base_size / 11),
+    legend.title = ggplot2::element_text(size = 9 * base_size / 11),
+    legend.key.size = ggplot2::unit(0.35 * base_size / 11, "cm"),
     legend.spacing.y = ggplot2::unit(0.15, "cm"),
     legend.margin = ggplot2::margin(2, 2, 2, 2)
   )
@@ -561,20 +744,20 @@ outer_shapes <- function(ellipses, group) {
 }
 
 # A constant point size, or one value per sample to map.
-embedding_size <- function(quo, df) {
+embedding_size <- function(quo, df, arg = "point_size") {
   expr <- rlang::quo_get_expr(quo)
   if (is.numeric(expr) && length(expr) == 1) {
-    check_number(expr, "size", lower = 0, lower_open = TRUE)
+    check_number(expr, arg, lower = 0, lower_open = TRUE)
     return(list(constant = expr, values = NULL, name = NULL))
   }
-  info <- embedding_values(quo, df, "size")
-  if (is.null(info$values)) return(list(constant = 2, values = NULL, name = NULL))
+  info <- embedding_values(quo, df, arg)
+  if (is.null(info$values)) return(list(constant = NULL, values = NULL, name = NULL))
   if (length(info$values) == 1 && is.numeric(info$values)) {
-    check_number(info$values, "size", lower = 0, lower_open = TRUE)
+    check_number(info$values, arg, lower = 0, lower_open = TRUE)
     return(list(constant = info$values, values = NULL, name = NULL))
   }
   if (!is.numeric(info$values)) {
-    stop("`size` must be a number, or a numeric column or vector with one value per sample.",
+    stop("`", arg, "` must be a number, or a numeric column or vector with one value per sample.",
          call. = FALSE)
   }
   list(constant = NULL, values = info$values, name = info$name)
@@ -611,33 +794,11 @@ embedding_loadings <- function(data, x, y, plot_df, top) {
     seq_along(norm)
   }
   chosen <- candidates[order(norm[candidates], decreasing = TRUE)][seq_len(min(top, length(candidates)))]
-  top_load <- biplot_label_positions(load[chosen, , drop = FALSE], plot_df)
+  top_load <- load[chosen, , drop = FALSE]
+  # arrows shorter than a fifth of the longest are drawn without a label,
+  # which would overlap the others near the origin
+  top_load$labeled <- norm[chosen] >= 0.2 * max(norm[chosen])
   list(all = load, top = top_load, factor = factor)
-}
-
-# Label positions beyond the arrow tips, pushed outward along the arrow until
-# they do not overlap the labels already placed (in units of the panel).
-biplot_label_positions <- function(top, plot_df) {
-  span_x <- diff(range(c(plot_df$.x, top$x), na.rm = TRUE))
-  span_y <- diff(range(c(plot_df$.y, top$y), na.rm = TRUE))
-  top$lx <- top$x * 1.08
-  top$ly <- top$y * 1.08
-  top$moved <- FALSE
-  for (i in seq_len(nrow(top))[-1]) {
-    for (step in 0:10) {
-      m <- 1.08 + 0.12 * step
-      lx <- top$x[i] * m
-      ly <- top$y[i] * m
-      width <- 0.012 * (nchar(top$label[i]) + nchar(top$label[seq_len(i - 1)])) / 2
-      clash <- abs(lx - top$lx[seq_len(i - 1)]) / span_x < width &
-        abs(ly - top$ly[seq_len(i - 1)]) / span_y < 0.045
-      if (!any(clash)) break
-    }
-    top$lx[i] <- lx
-    top$ly[i] <- ly
-    top$moved[i] <- step > 0
-  }
-  top
 }
 
 # Coordinates of the confidence ellipses of the groups (or of all samples).

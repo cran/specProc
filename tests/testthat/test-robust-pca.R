@@ -44,7 +44,7 @@ test_that("fast_mcd_cpp agrees with robustbase::covMcd on the center and shape",
 test_that("robpca recovers the subspace and flags the outliers", {
   d <- make_lowrank()
   set.seed(3)
-  fit <- robpca(d$x, k = 3)
+  fit <- robpca(d$x, ncomp = 3)
   expect_s3_class(fit, "specproc_robpca")
   expect_lt(max_angle(fit$loadings, d$loadings), 2)
   expect_true(all(d$outliers %in% which(fit$outlier_type != "regular")))
@@ -54,32 +54,37 @@ test_that("robpca recovers the subspace and flags the outliers", {
   expect_output(print(fit), "ROBPCA")
 })
 
-test_that("robpca works with more variables than observations and chooses k", {
+test_that("robpca works with more variables than observations and chooses ncomp", {
   d <- make_lowrank(n = 50, p = 300, k = 2, n_out = 4, seed = 4)
   set.seed(5)
-  fit <- robpca(d$x, k = 2)
+  fit <- robpca(d$x, ncomp = 2)
   # as close to the true subspace as classical PCA of the clean observations
   clean <- prcomp(d$x[-d$outliers, ])$rotation[, 1:2]
   expect_lt(max_angle(fit$loadings, d$loadings), max_angle(clean, d$loadings) + 2)
   set.seed(5)
   auto <- robpca(d$x)
-  expect_gte(auto$k, 1)
-  expect_lte(auto$k, 10)
+  expect_gte(auto$ncomp, 1)
+  expect_lte(auto$ncomp, 10)
 })
 
 test_that("robpca is reproducible with set.seed", {
   d <- make_lowrank(seed = 6)
   set.seed(7)
-  a <- robpca(d$x, k = 2)
+  a <- robpca(d$x, ncomp = 2)
   set.seed(7)
-  b <- robpca(d$x, k = 2)
-  expect_identical(a$loadings, b$loadings)
+  b <- robpca(d$x, ncomp = 2)
+  # the same random subsets; the loadings then agree up to the rounding of
+  # svd() and eigen(), whose BLAS need not be bitwise reproducible between
+  # two calls (it differed in the last digit on GitHub Actions)
+  expect_identical(a$H0, b$H0)
+  expect_identical(a$H1, b$H1)
+  expect_equal(a$loadings, b$loadings, tolerance = 1e-12)
 })
 
 test_that("predict() reproduces the calibration scores and distances", {
   d <- make_lowrank(seed = 8)
   set.seed(9)
-  fit <- robpca(d$x, k = 3)
+  fit <- robpca(d$x, ncomp = 3)
   pred <- predict(fit, d$x)
   expect_named(pred, c("PC1", "PC2", "PC3", "sd", "od", "outlier_type"))
   expect_equal(as.matrix(pred[1:3]), fit$scores, ignore_attr = TRUE)
@@ -94,7 +99,7 @@ test_that("robpca agrees with rospca::robpca", {
   d <- make_lowrank(seed = 10)
   ref <- rospca::robpca(d$x, k = 3)
   set.seed(11)
-  fit <- robpca(d$x, k = 3)
+  fit <- robpca(d$x, ncomp = 3)
   expect_lt(max_angle(fit$loadings, ref$loadings), 2)
   expect_equal(fit$eigenvalues, ref$eigenvalues, tolerance = 0.1, ignore_attr = TRUE)
   expect_gt(mean((fit$outlier_type != "regular") == (ref$flag.all == 0)), 0.95)
@@ -108,7 +113,7 @@ test_that("rospca recovers a block-sparse structure", {
   x <- cbind(f1 + matrix(rnorm(n * 4, sd = 0.5), n), f2 + matrix(rnorm(n * 4, sd = 0.5), n),
              matrix(rnorm(n * 4, sd = 1), n))
   x[1:10, ] <- x[1:10, ] + 8
-  fit <- rospca(x, k = 2, lambda = 1)
+  fit <- rospca(x, ncomp = 2, lambda = 1)
   expect_s3_class(fit, c("specproc_rospca", "specproc_robpca"))
   support <- fit$loadings != 0
   expect_true(all(support[1:4, 1]) && !any(support[5:12, 1]))
@@ -117,8 +122,78 @@ test_that("rospca recovers a block-sparse structure", {
   expect_true(all(1:10 %in% which(fit$outlier_type != "regular")))
   expect_output(print(fit), "Non-zero loadings")
   # no sparsity without penalty
-  dense <- rospca(x, k = 2, lambda = 0)
+  dense <- rospca(x, ncomp = 2, lambda = 0)
   expect_gt(sum(dense$loadings != 0), sum(support))
+})
+
+test_that("rospca chooses ncomp from the explained variance, as robpca", {
+  # variances of about 100, 49 and 16 on 3 components, and 1.6 of noise
+  d <- make_lowrank(seed = 10)
+  set.seed(11)
+  expect_equal(rospca(d$x)$ncomp, 2L)
+  set.seed(11)
+  expect_equal(rospca(d$x, var_explained = 0.95)$ncomp, 3L)
+  set.seed(11)
+  expect_equal(robpca(d$x, var_explained = 0.95)$ncomp, 3L)
+  set.seed(11)
+  expect_equal(rospca(d$x, var_explained = 0.95, ncomp_max = 2)$ncomp, 2L)
+  # ncomp_max bounds only the choice
+  set.seed(11)
+  expect_equal(rospca(d$x, ncomp = 3, ncomp_max = 2)$ncomp, 3L)
+  expect_error(rospca(d$x, var_explained = 0), "var_explained")
+})
+
+test_that("robust PCA with ncomp equal to the rank reduces to the reweighted MCD", {
+  set.seed(14)
+  x <- matrix(rnorm(500), 100, 5)
+  x[1:5, ] <- x[1:5, ] + 6
+  set.seed(15)
+  fit <- robpca(x, ncomp = 5)
+  # the subspace is the whole space: no orthogonal distances or outliers
+  expect_identical(fit$H1, fit$H0)
+  expect_true(all(fit$od == 0))
+  expect_identical(fit$cutoff_od, 0)
+  expect_true(all(fit$outlier_type %in% c("regular", "good leverage")))
+  expect_true(all(fit$outlier_type[1:5] == "good leverage"))
+  mcd <- fast_mcd_cpp(x, fit$h, 500L)
+  expect_equal(unname(fit$center), mcd$center, tolerance = 1e-6)
+  expect_equal(fit$eigenvalues, eigen(mcd$cov, symmetric = TRUE)$values, tolerance = 1e-6)
+  pred <- predict(fit, x)
+  expect_true(all(pred$od == 0))
+  expect_equal(pred$outlier_type, fit$outlier_type)
+  # also when ncomp is chosen
+  set.seed(15)
+  expect_equal(robpca(x, var_explained = 1)$ncomp, 5L)
+
+  set.seed(15)
+  expect_equal(rospca(x, var_explained = 1)$ncomp, 5L)
+
+  sparse <- rospca(x, ncomp = 5)
+  expect_identical(sparse$H1, sparse$H0)
+  expect_identical(sparse$H2, sparse$H1)
+  expect_identical(sparse$cutoff_od, 0)
+  expect_true(all(sparse$outlier_type[1:5] == "good leverage"))
+  expect_false(any(macropca(x, ncomp = 5)$outlier_type %in% c("orthogonal outlier", "bad leverage")))
+
+  # more variables than observations: the rank is n - 1, and new observations
+  # off the subspace are orthogonal outliers
+  set.seed(16)
+  wide <- matrix(rnorm(10 * 30), 10, 30)
+  fit <- robpca(wide, ncomp = 9)
+  expect_true(all(fit$od == 0))
+  expect_identical(fit$cutoff_od, 0)
+  expect_true(all(predict(fit, matrix(rnorm(2 * 30), 2, 30))$od > 0))
+})
+
+test_that("orthogonal distances and their cut-off do not depend on the scale of the data", {
+  d <- make_lowrank(seed = 17)
+  xc <- sweep(d$x, 2, colMeans(d$x))
+  od <- orthogonal_distance(xc, d$loadings)
+  expect_equal(orthogonal_distance(xc * 1e-10, d$loadings) / 1e-10, od)
+  expect_equal(od_cutoff(od * 1e-10, 90) / 1e-10, od_cutoff(od, 90))
+  # rounding errors are zero distances, with a zero cut-off
+  expect_true(all(orthogonal_distance(xc, svd(xc)$v) == 0))
+  expect_identical(od_cutoff(rep(0, 10), 8), 0)
 })
 
 test_that("macropca detects outlying rows and cells and predicts with missing values", {
@@ -127,7 +202,7 @@ test_that("macropca detects outlying rows and cells and predicts with missing va
   x[1:3, ] <- x[1:3, ] + 20
   x[10, 2] <- 40
   x[12, 5] <- NA
-  fit <- macropca(x, k = 2)
+  fit <- macropca(x, ncomp = 2)
   expect_s3_class(fit, c("specproc_macropca", "specproc_robpca"))
   expect_true(fit$flagged_cells[10, 2])
   expect_true(all(c(1:3, 10) %in% which(fit$outlier_type != "regular")))
@@ -155,7 +230,7 @@ test_that("macropca reproduces cellWise::MacroPCA", {
   x[1:3, ] <- x[1:3, ] + 20
   x[10, 2] <- 40
   x[12, 5] <- NA
-  fit <- macropca(x, k = 2)
+  fit <- macropca(x, ncomp = 2)
   ref <- cellWise::MacroPCA(x, k = 2, MacroPCApars = list(alpha = 0.5, silent = TRUE, scale = FALSE))
   expect_equal(abs(fit$loadings), abs(ref$loadings), tolerance = 1e-8, ignore_attr = TRUE)
   expect_equal(fit$eigenvalues, ref$eigenvalues, tolerance = 1e-8)
@@ -177,7 +252,7 @@ test_that("macropca follows the steps of the paper", {
   set.seed(13)
   x <- matrix(rnorm(60 * 8), 60, 8) %*% diag(8:1)
   x[1:3, ] <- x[1:3, ] + 20
-  fit <- macropca(x, k = 2)
+  fit <- macropca(x, ncomp = 2)
   # rows flagged by DDC, and the 99% cut-offs of the paper
   expect_type(fit$flagged_rows, "logical")
   expect_length(fit$flagged_rows, 60L)
@@ -188,7 +263,7 @@ test_that("macropca follows the steps of the paper", {
   expect_equal(max_angle(diag(8)[, 1:2], diag(8)[, 1:2]), 0)
 })
 
-test_that("macropca chooses k from the explained variance", {
+test_that("macropca chooses ncomp from the explained variance", {
   set.seed(13)
   x <- matrix(rnorm(60 * 8), 60, 8) %*% diag(8:1)
   x[1:3, ] <- x[1:3, ] + 20
@@ -196,14 +271,14 @@ test_that("macropca chooses k from the explained variance", {
   expect_silent(fit <- macropca(x))
   expect_identical(grDevices::dev.list(), devices)
   # variances 64, 49, 36, 25, ... of a total of 204: 4 components for 80%
-  expect_equal(fit$k, 4L)
-  # kmax components when they explain less than var_explained
-  expect_equal(macropca(x, kmax = 2, var_explained = 0.99)$k, 2L)
+  expect_equal(fit$ncomp, 4L)
+  # ncomp_max components when they explain less than var_explained
+  expect_equal(macropca(x, ncomp_max = 2, var_explained = 0.99)$ncomp, 2L)
   expect_error(macropca(x, var_explained = 0), "var_explained")
   # scale = TRUE scales the variables by their robust scale
-  scaled <- macropca(x, k = 2, scale = TRUE)
+  scaled <- macropca(x, ncomp = 2, scale = TRUE)
   expect_true(all(scaled$scale != 1))
-  expect_false(isTRUE(all.equal(scaled$od, macropca(x, k = 2)$od)))
+  expect_false(isTRUE(all.equal(scaled$od, macropca(x, ncomp = 2)$od)))
 })
 
 test_that("ddc reproduces cellWise::DDC", {
@@ -251,20 +326,65 @@ test_that("ddc flags deviating cells and rows and imputes them", {
   expect_false(any(ddc(x)$flagged_cells[, 30]))
 })
 
+test_that("robust PCA does not depend on the scale of the data", {
+  set.seed(1)
+  x <- matrix(rnorm(500), 100, 5) %*% diag(c(5, 3, 1, 0.1, 0.1))
+  x[1:4, 3] <- x[1:4, 3] + 6     # orthogonal outliers
+  x[5:7, 1] <- x[5:7, 1] + 25    # good leverage points
+  s <- 1e-8
+  set.seed(2)
+  fit <- robpca(x, ncomp = 2)
+  set.seed(2)
+  small <- robpca(x * s, ncomp = 2)
+  expect_identical(small$H0, fit$H0)
+  expect_identical(small$H1, fit$H1)
+  expect_identical(small$outlier_type, fit$outlier_type)
+  expect_true(all(c("good leverage", "orthogonal outlier") %in% fit$outlier_type))
+  expect_equal(small$eigenvalues, fit$eigenvalues * s^2)
+  expect_equal(abs(small$loadings), abs(fit$loadings))
+  expect_equal(small$center, fit$center * s)
+  expect_equal(small$sd, fit$sd)
+  expect_equal(small$od, fit$od * s)
+  expect_equal(small$cutoff_od, fit$cutoff_od * s)
+
+  # rospca, on block-sparse data (standardized, the sparse loadings are unit-free)
+  set.seed(3)
+  y <- cbind(rnorm(100, sd = 3) + matrix(rnorm(300, sd = 0.5), 100),
+             rnorm(100, sd = 2) + matrix(rnorm(300, sd = 0.5), 100), matrix(rnorm(300), 100))
+  y[1:5, ] <- y[1:5, ] + 8
+  set.seed(4)
+  fit <- rospca(y, ncomp = 2)
+  set.seed(4)
+  small <- rospca(y * s, ncomp = 2)
+  expect_identical(small[c("H0", "H1", "H2", "H3", "outlier_type")], fit[c("H0", "H1", "H2", "H3", "outlier_type")])
+  expect_equal(small$loadings, fit$loadings)
+  expect_equal(small$scale, fit$scale * s)
+
+  # macropca and DDC (deterministic)
+  fit <- macropca(x, ncomp = 2)
+  small <- macropca(x * s, ncomp = 2)
+  expect_identical(small$flagged_cells, fit$flagged_cells)
+  expect_identical(small$outlier_type, fit$outlier_type)
+  expect_equal(small$eigenvalues, fit$eigenvalues * s^2)
+  expect_equal(small$od, fit$od * s)
+  x[, 5] <- 2  # a constant variable
+  expect_equal(ddc(x * 1e-14)$std_resid, ddc(x)$std_resid)
+})
+
 test_that("robust PCA functions validate their inputs", {
   d <- make_lowrank(seed = 14)
   expect_error(robpca(d$x, alpha = 0.3), "alpha")
   x_na <- d$x
   x_na[1, 1] <- NA
   expect_error(robpca(x_na), "macropca")
-  expect_error(rospca(d$x, k = 2, lambda = -1), "lambda")
-  expect_error(predict(robpca(d$x, k = 2), d$x[, -1]), "columns")
+  expect_error(rospca(d$x, ncomp = 2, lambda = -1), "lambda")
+  expect_error(predict(robpca(d$x, ncomp = 2), d$x[, -1]), "columns")
 })
 
 test_that("plot_outlier_map and plot_cell_map return ggplots", {
   d <- make_lowrank(seed = 15)
   set.seed(16)
-  fit <- robpca(d$x[-(1:20), ], k = 3)
+  fit <- robpca(d$x[-(1:20), ], ncomp = 3)
   p <- plot_outlier_map(fit, newdata = d$x[1:20, ])
   expect_s3_class(p, "ggplot")
   built <- ggplot2::ggplot_build(p)
@@ -302,7 +422,7 @@ test_that("plot_outlier_map and plot_cell_map return ggplots", {
   expect_false(identical(plot_outlier_map(fit, newdata = d$x[1:20, ])$scales$get_scales("shape")$guide, "none"))
 
   # points colored by their reduced distance from the origin, farthest on top
-  rad <- plot_outlier_map(fit, colour_by = "distance", relative = TRUE)
+  rad <- plot_outlier_map(fit, color_by = "distance", relative = TRUE)
   expect_s3_class(rad$scales$get_scales("fill"), "ScaleContinuous")
   radius <- pmax(fit$sd / fit$cutoff_sd, fit$od / fit$cutoff_od)
   expect_equal(rad$data$radius, sort(radius))
@@ -312,11 +432,11 @@ test_that("plot_outlier_map and plot_cell_map return ggplots", {
   expect_equal(toupper(sc$map(0)), toupper(radial_rainbow[1]))              # dark red at the origin
   expect_true(1 %in% sc$get_breaks())
   # on the raw distances, two cut-offs of different scales: no anchor at 1
-  raw <- plot_outlier_map(fit, colour_by = "distance")
+  raw <- plot_outlier_map(fit, color_by = "distance")
   sr <- ggplot2::ggplot_build(raw)$plot$scales$get_scales("fill")
   expect_equal(sr$get_limits(), range(radius))
   expect_false(any(grepl("cut-off", sr$get_labels())))
-  expect_error(plot_outlier_map(fit, colour_by = "od"), "arg")
+  expect_error(plot_outlier_map(fit, color_by = "od"), "arg")
 
   # point styling is passed to geom_point(), over the defaults
   styled <- ggplot2::ggplot_build(plot_outlier_map(fit, alpha = 0.4, size = 3, color = "red"))
@@ -324,12 +444,12 @@ test_that("plot_outlier_map and plot_cell_map return ggplots", {
   expect_equal(unique(styled$data[[3]]$size), 3)
   expect_equal(unique(styled$data[[3]]$colour), "red")
   expect_equal(unique(styled$data[[3]]$stroke), 0.4)
-  expect_error(plot_outlier_map(fit, NULL, 3, FALSE, FALSE, FALSE, "type", NULL, 0.5), "named")
+  expect_error(plot_outlier_map(fit, NULL, 3, FALSE, FALSE, FALSE, "type", NULL, "regression", 0.5), "named")
 
   set.seed(17)
   x <- matrix(rnorm(40 * 8), 40, 8) %*% diag(8:1)
   x[10, 2] <- 40
-  mfit <- macropca(x, k = 2)
+  mfit <- macropca(x, ncomp = 2)
   expect_s3_class(plot_outlier_map(mfit), "ggplot")
   skip_if_not_installed("patchwork")
   expect_s3_class(plot_cell_map(mfit), "ggplot")
@@ -363,7 +483,7 @@ make_flagged_spectra <- function() {
 
 test_that("flagged_regions finds the channels flagged in many observations", {
   x <- make_flagged_spectra()
-  fit <- macropca(x, k = 2)
+  fit <- macropca(x, ncomp = 2)
   regions <- flagged_regions(fit, threshold = 0.2)
   expect_s3_class(regions, "tbl_df")
   expect_named(regions, c("start", "end", "peak", "channels", "share", "mean_share", "direction"))
@@ -402,7 +522,7 @@ test_that("runs of flagged channels are merged across short gaps and split at se
 test_that("plot_cell_map clusters the rows and draws the mean spectrum", {
   skip_if_not_installed("patchwork")
   x <- make_flagged_spectra()
-  fit <- macropca(x, k = 2)
+  fit <- macropca(x, ncomp = 2)
   # the rows flagged in the same region are grouped
   cell <- ifelse(fit$flagged_cells, sign(fit$std_resid), 0)
   o <- cell_map_cluster(cell, cell_map_columns(rep(1L, 20), 20, 400))
@@ -413,7 +533,7 @@ test_that("plot_cell_map clusters the rows and draws the mean spectrum", {
   # the profile has the mean spectrum (raw data), not with centered data
   has_line <- function(p) any(vapply(p[[1]]$layers, function(l) inherits(l$geom, "GeomLine"), logical(1)))
   expect_true(has_line(p))
-  centered <- macropca(sweep(x, 2, colMeans(x)), k = 2)
+  centered <- macropca(sweep(x, 2, colMeans(x)), ncomp = 2)
   expect_false(has_line(plot_cell_map(centered)))
   expect_true(has_line(plot_cell_map(centered, spectra = x)))
   expect_error(plot_cell_map(centered, spectra = x[, 1:3]), "variables")

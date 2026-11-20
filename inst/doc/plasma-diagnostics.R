@@ -21,7 +21,7 @@ minerals <- forageLIBS |> select(3:14) |> names()
 spectra <- forageLIBS |> select(-all_of(c(spectra_id, minerals)))
 wl <- as.numeric(names(spectra))
 
-corrected <- baseline_arpls(spectra, lambda = 1e5, max.iter = 20)$correction
+corrected <- baseline_arpls(spectra, lambda = 1e5, max_iter = 20)$correction
 mean_spectrum <- colMeans(corrected)
 
 ## ----saturation---------------------------------------------------------------
@@ -42,6 +42,11 @@ width <- halpha$tidied[[1]] |> filter(term == "wL")
 width
 ne <- electron_density(width$estimate, method = "halpha")
 ne
+
+## ----density-uncertainty------------------------------------------------------
+ne_u <- electron_density_uncertainty(width$estimate, width$std.error, method = "halpha",
+                                     reference_rsd = 0.1)
+ne_u
 
 ## ----nist, eval = FALSE-------------------------------------------------------
 # ca_lines <- nist_lines(c("Ca I", "Ca II"), wavelength = c(310, 660))
@@ -84,9 +89,25 @@ saha
 ## ----saha-plot, fig.height = 4------------------------------------------------
 plot_boltzmann(saha)
 
+## ----tidy---------------------------------------------------------------------
+tidy(saha, conf.int = TRUE)
+glance(saha)
+
+## ----temperature-uncertainty--------------------------------------------------
+set.seed(1)
+saha_u <- plasma_uncertainty(saha, electron_density_se = ne_u$se)
+saha_u
+
 ## ----mcwhirter----------------------------------------------------------------
 lte <- mcwhirter_criterion(temperature = saha$temperature, delta_e = 3.15, electron_density = ne)
 lte
+
+## ----lte-criteria-------------------------------------------------------------
+criteria <- lte_criteria(temperature = saha$temperature, electron_density = ne,
+                         delta_e = 3.15, oscillator_strength = 0.68, mass = "Ca",
+                         length_scale = 1)
+criteria |>
+  select(mcwhirter, relaxation_time, diffusion_length, length_ratio, spatial)
 
 ## ----self-absorption----------------------------------------------------------
 k_lines <- tribble(
@@ -178,4 +199,9 @@ cf_mean$composition |>
 ratios <- cf_mean$composition |>
   mutate(laboratory = laboratory[element] / sum(laboratory), ratio = mass_fraction / laboratory)
 ratio_of <- \(e) round(ratios$ratio[ratios$element == e], 1)
+
+## ----cf-uncertainty-----------------------------------------------------------
+set.seed(1)
+cf_u <- plasma_uncertainty(cf_mean, n = 500, electron_density_se = ne_u$se)
+cf_u
 

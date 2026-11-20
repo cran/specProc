@@ -52,7 +52,8 @@ given at the mean wavelength of the multiplet; the \code{upper} and \code{lower}
 configurations and terms identify them.
 
 The results of a query are cached for the R session, so repeated calls
-with the same \code{species} do not download the data again.
+with the same \code{species} do not download the data again, and between
+sessions with the persistent cache (see \code{\link[=download_cache]{download_cache()}}).
 
 When you use these data, cite the STARK-B database and the original
 publications, listed in the \code{source} column:
@@ -64,8 +65,9 @@ of Belgrade (see the References).
 }
 \examples{
 \donttest{
-# needs an internet connection
-ca <- try(starkb_lines("Ca II", wavelength = c(390, 400), perturber = "electron"))
+# needs an internet connection; gives up after 20 s if STARK-B does not answer
+ca <- try(starkb_lines("Ca II", wavelength = c(390, 400), perturber = "electron",
+                      timeout = 20))
 if (!inherits(ca, "try-error")) head(ca)
 }
 }
@@ -80,7 +82,8 @@ Physica Scripta, 90(5):054008. \doi{10.1088/0031-8949/90/5/054008}
 \seealso{
 \code{\link[=stark_width]{stark_width()}} to interpolate the width of a line at a given
 temperature and density, \code{\link[=electron_density]{electron_density()}}, \code{\link[=read_starkb]{read_starkb()}} for
-saved STARK-B files, and \code{\link[=stark_table]{stark_table()}} for data from other sources.
+saved STARK-B files, \code{\link[=read_vald]{read_vald()}} and \code{\link[=read_kurucz]{read_kurucz()}} for the lines
+STARK-B does not have, and \code{\link[=stark_table]{stark_table()}} for data from other sources.
 }
 \author{
 Christian L. Goueguel

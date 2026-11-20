@@ -4,31 +4,43 @@
 \alias{line_finder}
 \title{Interactive Identification of Emission Lines}
 \usage{
-line_finder(spectra, launch.browser = interactive(), show_table = TRUE)
+line_finder(
+  spectra,
+  launch_browser = interactive(),
+  show_table = TRUE,
+  launch.browser = deprecated()
+)
 }
 \arguments{
 \item{spectra}{Spectra, one per row: a numeric matrix, or a data frame
 whose wavelength columns are named by their wavelengths (other columns
 are used as labels).}
 
-\item{launch.browser}{Passed to \code{\link[shiny:runApp]{shiny::runApp()}}. Default is \code{TRUE}
-when R is interactive.}
+\item{launch_browser}{Passed to \code{\link[shiny:runApp]{shiny::runApp()}} as \code{launch.browser}.
+Default is \code{TRUE} when R is interactive.}
 
 \item{show_table}{A logical: show the periodic table when the app starts
 (\code{TRUE}, default). The \strong{Hide table} button of the Elements panel hides
 or shows it at any time; hiding it gives the spectrum the whole height of
 the window.}
+
+\item{launch.browser}{\ifelse{html}{\href{https://lifecycle.r-lib.org/articles/stages.html#deprecated}{\figure{lifecycle-deprecated.svg}{options: alt='[Deprecated]'}}}{\strong{[Deprecated]}} Use \code{launch_browser}.}
 }
 \value{
-Called for its side effect: runs the app. Use \code{\link[=libs_lines]{libs_lines()}} and
-\code{\link[=plot_lines]{plot_lines()}} for the same results in scripts.
+Invisibly, when the app is closed with \strong{Done}, the \code{\link[=boltzmann]{boltzmann()}}
+fit of the Boltzmann plot, whose \code{lines} element holds the measured
+lines; \code{NULL} if the plot has fewer than 3 usable lines. Use
+\code{\link[=libs_lines]{libs_lines()}}, \code{\link[=plot_lines]{plot_lines()}}, \code{\link[=line_intensities]{line_intensities()}} and \code{\link[=boltzmann]{boltzmann()}}
+for the same results in scripts.
 }
 \description{
 Launches a Shiny app to identify the emission lines of LIBS spectra.
 Elements are selected on a periodic table, and the strongest lines of
 their selected ionization stages, from the NIST Atomic Spectra Database,
 are overlaid on a spectrum in an interactive plotly graph, with one color
-per ionization stage.
+per ionization stage. The heads of molecular bands can be overlaid too.
+Lines of a species picked on the spectrum build a Boltzmann plot, whose
+temperature is fitted again as lines are added or left out.
 }
 \details{
 The app offers:
@@ -41,6 +53,9 @@ stay listed in the panel header;
 \item the plasma temperature and the number of lines per species, which set
 the lines kept and the height of their markers (relative intensities in
 local thermodynamic equilibrium, see \code{\link[=libs_lines]{libs_lines()}});
+\item molecules whose band heads are marked with dashed lines, at a
+vibrational temperature (see \code{\link[=molecular_bands]{molecular_bands()}}; no download
+needed);
 \item the wavelength range, a wavelength shift to correct the calibration of
 the spectrometer, and the spectrum to show: the mean of all spectra, the
 mean of a group (from the first character or factor column of
@@ -50,8 +65,24 @@ the lines fetched so far, so that a session can continue offline.
 }
 
 Each species is downloaded from NIST once per R session (see
-\code{\link[=nist_lines]{nist_lines()}}); later changes of the settings are computed locally. The
+\code{\link[=nist_lines]{nist_lines()}}), or once for all sessions with the persistent cache (see
+\code{\link[=download_cache]{download_cache()}}); later changes of the settings are computed locally. The
 zoom of the plot is kept when the lines change.
+
+\strong{Boltzmann plot.} Clicking the dot at the top of a line marker adds the
+line to the Boltzmann plot of its species, and clicking it again removes
+it; \strong{Add shown lines} adds all the lines shown for the species chosen in
+the Boltzmann plot panel. The intensities are measured on the displayed
+spectrum with \code{\link[=line_intensities]{line_intensities()}}, around the tabulated wavelengths plus
+the wavelength shift, with the settings of the panel, and the temperature
+is fitted with \code{\link[=boltzmann]{boltzmann()}}. Clicking a point of the plot leaves its line
+out of the fit or puts it back; lines without a positive intensity are
+left out. The table under the plot lists the upper-level energy, the
+signal-to-noise ratio and the residual of each line, \strong{Use T} sets the
+temperature of the candidate lines to the fitted one, and \strong{Done} closes
+the app and returns the fit to R. The spectra should be corrected for the
+spectral response of the instrument first (see \code{\link[=correct_response]{correct_response()}}), and
+the lines should be optically thin (see \code{\link[=self_absorption]{self_absorption()}}).
 
 The app needs the shiny, plotly and bslib packages, and an internet
 connection for the species not yet fetched.
@@ -59,11 +90,13 @@ connection for the species not yet fetched.
 \examples{
 if (interactive() && rlang::is_installed(c("shiny", "plotly", "bslib"))) {
   data(forageLIBS)
-  line_finder(forageLIBS[-(1:14)])
+  fit <- line_finder(forageLIBS[-(1:14)])
+  # after a Boltzmann plot closed with Done
+  if (!is.null(fit)) plot_boltzmann(fit)
 }
 }
 \seealso{
-\code{\link[=libs_lines]{libs_lines()}}, \code{\link[=plot_lines]{plot_lines()}}, \code{\link[=nist_lines]{nist_lines()}}
+\code{\link[=libs_lines]{libs_lines()}}, \code{\link[=plot_lines]{plot_lines()}}, \code{\link[=nist_lines]{nist_lines()}}, \code{\link[=boltzmann]{boltzmann()}}
 }
 \author{
 Christian L. Goueguel

@@ -49,8 +49,8 @@
 #'
 #' **Explained variance.** For a [stats::prcomp()] fit, the percentages in
 #' the panel titles are shares of the total variance. For [robpca()],
-#' [rospca()] and [macropca()] fits, which estimate only the `k` components,
-#' they are shares of the variance of these `k` components.
+#' [rospca()] and [macropca()] fits, which estimate only their `ncomp`
+#' components, they are shares of the variance of these components.
 #'
 #' @param model A [stats::prcomp()] fit or an object returned by [robpca()],
 #'   [rospca()] or [macropca()]. The variable names must be the
@@ -76,6 +76,16 @@
 #' @param interactive If `TRUE`, the plot is made with plotly, with the
 #'   peaks and their candidate lines shown on hover. Default is `FALSE`.
 #' @param title The plot title.
+#' @param wavelength Optional (`NULL` by default). The wavelength range
+#'   `c(min, max)` to draw, in nm; the `top` largest peaks within it are
+#'   labeled. Needs variables named by wavelength.
+#' @param xlab,ylab The axis titles. Default are `"Wavelength (nm)"` (or
+#'   `"Variable"`) and the name of the values drawn. In interactive plots,
+#'   each panel has its own vertical axis title and `ylab` is ignored.
+#' @param base_size The size of the text, in points. Default is 11; the
+#'   peak labels scale with it. Ignored for interactive plots.
+#' @param linewidth The width of the bars (or, for interactive plots, of the
+#'   line) drawn at each variable. Default is 0.3.
 #'
 #' @return A ggplot object, or a plotly object if `interactive = TRUE`. The
 #'   room left for the labels suits plots about 8 inches high; make the plot
@@ -93,34 +103,43 @@
 #' fit <- robpca(center(spectra))
 #' plot_loadings(fit, spectra = spectra)
 #' plot_loadings(fit, type = "contribution", spectra = spectra)
+#' # the Ca II H and K lines
+#' plot_loadings(fit, spectra = spectra, wavelength = c(390, 400), top = 4)
 #' \donttest{
 #' # label the peaks with emission lines from the NIST database (needs an
 #' # internet connection)
-#' lines <- try(libs_lines(c("Ca I", "Ca II", "K I", "Mg I", "Mg II", "Na I", "C I", "H I")))
+#' lines <- try(libs_lines(c("Ca I", "Ca II", "K I", "Mg I", "Mg II", "Na I", "C I", "H I"),
+#'                         timeout = 20))
 #' if (!inherits(lines, "try-error")) plot_loadings(fit, lines = lines, spectra = spectra)
 #' }
 #'
 plot_loadings <- function(model, components = NULL, type = c("loadings", "contribution"),
                           top = 10, lines = NULL, tol = 0.1, spectra = NULL, span = 5,
-                          interactive = FALSE, title = NULL) {
+                          interactive = FALSE, title = NULL, wavelength = NULL, xlab = NULL,
+                          ylab = NULL, base_size = 11, linewidth = 0.3) {
   type <- match.arg(type)
   check_flag(interactive, "interactive")
+  check_plot_text(title, xlab, ylab, base_size)
+  check_size(linewidth, "linewidth")
   parts <- loading_parts(model)
   components <- loading_components(parts, components)
   check_peak_args(top, span, lines, tol, parts)
+  window <- loading_window(wavelength, parts)
   curves <- loading_curves(parts, components, type)
-  peaks <- find_loading_peaks(curves, parts, top, span, lines, tol)
-  background <- if (is.null(spectra)) NULL else loading_background(spectra, parts, curves)
+  peaks <- find_loading_peaks(curves, parts, top, span, lines, tol, window)
+  background <- if (is.null(spectra)) NULL else loading_background(spectra, parts, curves, window)
+  curves <- curves[in_window(curves$wavelength, window), , drop = FALSE]
   if (is.null(title)) {
     title <- paste0(model_label(model), if (type == "loadings") " loadings" else
       " explained variance by wavelength")
   }
-  x_lab <- if (parts$has_wavelength) "Wavelength (nm)" else "Variable"
-  y_lab <- if (type == "loadings") "Loading" else "Explained variance"
+  style <- list(x_lab = xlab %||% if (parts$has_wavelength) "Wavelength (nm)" else "Variable",
+                y_lab = ylab %||% if (type == "loadings") "Loading" else "Explained variance",
+                title = title, base_size = base_size, linewidth = linewidth)
   if (interactive) {
-    plot_loadings_plotly(curves, peaks, background, x_lab, y_lab, title)
+    plot_loadings_plotly(curves, peaks, background, style)
   } else {
-    plot_loadings_ggplot(curves, peaks, background, parts, x_lab, y_lab, title)
+    plot_loadings_ggplot(curves, peaks, background, parts, style)
   }
 }
 
@@ -237,6 +256,22 @@ check_peak_args <- function(top, span, lines, tol, parts) {
   invisible(TRUE)
 }
 
+# The wavelength window of a loadings or contributions plot, checked against
+# the variables.
+loading_window <- function(wavelength, parts) {
+  window <- wavelength_window(wavelength)
+  if (is.null(window)) {
+    return(NULL)
+  }
+  if (!parts$has_wavelength) {
+    stop("'wavelength' needs variables named by wavelength.", call. = FALSE)
+  }
+  if (sum(in_window(parts$wavelength, window)) < 2) {
+    stop("Fewer than 2 variables in the 'wavelength' range.", call. = FALSE)
+  }
+  window
+}
+
 # One curve per panel, in long format: panel, wavelength, value, segment.
 loading_curves <- function(parts, components, type) {
   pct <- function(s) paste0(formatC(100 * s, format = "f", digits = 1), "%")
@@ -284,7 +319,9 @@ local_maxima <- function(v, segment, span) {
   which(keep)
 }
 
-find_loading_peaks <- function(curves, parts, top, span, lines, tol) {
+# The local extrema of each curve, over all its channels, and the `top`
+# largest ones within the wavelength window.
+find_loading_peaks <- function(curves, parts, top, span, lines, tol, window = NULL) {
   empty <- data.frame(panel = factor(levels = levels(curves$panel)), component = character(),
                       variable = character(), index = integer(), wavelength = numeric(),
                       value = numeric(), sign = character(), derivative = logical(),
@@ -298,6 +335,7 @@ find_loading_peaks <- function(curves, parts, top, span, lines, tol) {
     neg <- if (cv$type[1] == "loadings") local_maxima(-v, cv$segment, span) else integer()
     neg <- neg[v[neg] < 0]
     idx <- c(pos, neg)
+    idx <- idx[in_window(cv$wavelength[idx], window)]
     if (length(idx) == 0) return(NULL)
     chosen <- idx[order(abs(v[idx]), decreasing = TRUE)][seq_len(min(top, length(idx)))]
     # derivative shape: an opposite extremum at least half as large nearby
@@ -346,12 +384,11 @@ wavelength_digits <- function(wl) {
   as.integer(min(4, max(0, ceiling(-log10(spacing)))))
 }
 
-# Peak labels, spread along the wavelength axis so that they do not overlap
-# (each keeps a leader line to its peak).
+# Peak labels: the line species and wavelength, or the peak wavelength.
 loading_labels <- function(peaks, parts) {
   empty <- data.frame(panel = peaks$panel[0], wavelength = numeric(), value = numeric(),
                       sign = character(), label = character(), matched = logical(),
-                      x = numeric(), stringsAsFactors = FALSE)
+                      stringsAsFactors = FALSE)
   if (nrow(peaks) == 0) return(empty)
   digits <- if (parts$has_wavelength) wavelength_digits(parts$wavelength) else 0L
   out <- data.frame(
@@ -360,42 +397,7 @@ loading_labels <- function(peaks, parts) {
                    paste(peaks$species, format_wavelength(peaks$line_wavelength, 2))),
     matched = !is.na(peaks$species), stringsAsFactors = FALSE
   )
-  gap <- 0.013 * diff(range(parts$wavelength))
-  out$x <- out$wavelength
-  for (g in split(seq_len(nrow(out)), list(out$panel, out$sign), drop = TRUE)) {
-    out$x[g] <- spread_positions(out$wavelength[g], gap)
-  }
   out
-}
-
-# Positions as close as possible to `x`, at least `gap` apart: overlapping
-# labels are merged into evenly spaced groups centered on their targets.
-spread_positions <- function(x, gap) {
-  o <- order(x)
-  target <- x[o]
-  groups <- as.list(seq_along(target))
-  layout <- function(members) {
-    mean(target[members]) + (seq_along(members) - (length(members) + 1) / 2) * gap
-  }
-  repeat {
-    merged <- FALSE
-    k <- 1
-    while (k < length(groups)) {
-      right_edge <- max(layout(groups[[k]]))
-      left_edge <- min(layout(groups[[k + 1]]))
-      if (left_edge - right_edge < gap) {
-        groups[[k]] <- c(groups[[k]], groups[[k + 1]])
-        groups[[k + 1]] <- NULL
-        merged <- TRUE
-      } else {
-        k <- k + 1
-      }
-    }
-    if (!merged) break
-  }
-  pos <- numeric(length(target))
-  for (members in groups) pos[members] <- layout(members)
-  pos[order(o)]
 }
 
 # The mean of `spectra` (a data frame or matrix with the variables `vars`,
@@ -423,14 +425,16 @@ mean_spectrum <- function(spectra, vars) {
   unname(as.numeric(out))
 }
 
-# The mean spectrum, rescaled to the largest absolute value of each panel.
-loading_background <- function(spectra, parts, curves) {
+# The mean spectrum, rescaled to the largest absolute value of each panel,
+# within the wavelength window.
+loading_background <- function(spectra, parts, curves, window = NULL) {
   spectrum <- mean_spectrum(spectra, parts$variables)
-  top_value <- max(abs(spectrum), na.rm = TRUE)
+  keep <- in_window(parts$wavelength, window)
+  top_value <- max(abs(spectrum[keep]), na.rm = TRUE)
   if (!is.finite(top_value) || top_value == 0) top_value <- 1
   do.call(rbind, lapply(split(curves, curves$panel), function(cv) {
-    cv$value <- spectrum / top_value * max(abs(cv$value), na.rm = TRUE)
-    cv
+    cv$value <- spectrum / top_value * max(abs(cv$value[keep]), na.rm = TRUE)
+    cv[keep, , drop = FALSE]
   }))
 }
 
@@ -441,7 +445,9 @@ model_label <- function(model) {
 
 loading_colours <- c(positive = "#b2182b", negative = "#2166ac")
 
-plot_loadings_ggplot <- function(curves, peaks, background, parts, x_lab, y_lab, title) {
+# The loadings (or contributions) in ggplot2. `style` holds the axis titles
+# (x_lab, y_lab), the title, base_size and linewidth.
+plot_loadings_ggplot <- function(curves, peaks, background, parts, style) {
   labels <- loading_labels(peaks, parts)
   curves$sign <- ifelse(curves$value >= 0, "positive", "negative")
   p <- ggplot2::ggplot(curves, ggplot2::aes(x = .data$wavelength))
@@ -453,15 +459,17 @@ plot_loadings_ggplot <- function(curves, peaks, background, parts, x_lab, y_lab,
   # one bar per channel: peaks are often a single channel wide
   p <- p +
     ggplot2::geom_linerange(ggplot2::aes(ymin = 0, ymax = .data$value, colour = .data$sign),
-                            linewidth = 0.3) +
+                            linewidth = style$linewidth) +
     ggplot2::geom_hline(yintercept = 0, colour = "grey30", linewidth = 0.3) +
     ggplot2::scale_colour_manual(values = loading_colours, guide = "none")
   if (nrow(labels) > 0) {
-    # vertical labels above positive peaks and below negative ones, with a
-    # leader line when the label was moved aside
+    # vertical labels above positive peaks and below negative ones, moved
+    # apart along the wavelength axis by ggrepel, with a leader line to
+    # their peak
     extent <- tapply(abs(curves$value), curves$panel, max)[as.character(labels$panel)]
     up <- labels$sign == "positive"
-    labels$y <- labels$value + ifelse(up, 0.06, -0.06) * extent
+    nudge <- unname(ifelse(up, 0.06, -0.06) * extent)
+    labels$y <- labels$value + nudge
     labels$hjust <- ifelse(up, 0, 1)
     labels$fontface <- ifelse(labels$matched, "bold", "plain")
     # room for the labels, growing with their length and with the number of
@@ -470,29 +478,28 @@ plot_loadings_ggplot <- function(curves, peaks, background, parts, x_lab, y_lab,
     room <- data.frame(panel = labels$panel, wavelength = labels$wavelength,
                        value = labels$y + ifelse(up, 1, -1) * per_char * nchar(labels$label) * extent)
     p <- p +
-      ggplot2::geom_segment(data = labels,
-                            ggplot2::aes(x = .data$wavelength, xend = .data$x,
-                                         y = .data$value, yend = .data$y),
-                            colour = "grey55", linewidth = 0.25, inherit.aes = FALSE) +
-      ggplot2::geom_text(data = labels,
-                         ggplot2::aes(x = .data$x, y = .data$y, label = .data$label,
-                                      hjust = .data$hjust, fontface = .data$fontface),
-                         angle = 90, size = 2.6, colour = "grey15", inherit.aes = FALSE) +
+      ggrepel::geom_text_repel(data = labels,
+                               ggplot2::aes(x = .data$wavelength, y = .data$value, label = .data$label,
+                                            hjust = .data$hjust, fontface = .data$fontface),
+                               nudge_y = nudge, direction = "x", angle = 90,
+                               size = 0.67 * style$base_size / ggplot2::.pt,
+                               colour = "grey15", segment.colour = "grey55", min.segment.length = 0,
+                               max.overlaps = Inf, seed = 1, inherit.aes = FALSE) +
       ggplot2::geom_blank(data = room, ggplot2::aes(x = .data$wavelength, y = .data$value),
                           inherit.aes = FALSE)
   }
   p <- p +
     ggplot2::facet_wrap(ggplot2::vars(.data$panel), ncol = 1, scales = "free_y") +
     ggplot2::scale_y_continuous(expand = ggplot2::expansion(mult = 0.05)) +
-    ggplot2::labs(x = x_lab, y = y_lab, title = title) +
-    ggplot2::theme_bw() +
+    ggplot2::labs(x = style$x_lab, y = style$y_lab, title = style$title) +
+    ggplot2::theme_bw(base_size = style$base_size) +
     ggplot2::theme(strip.background = ggplot2::element_rect(fill = "grey95"),
                    strip.text = ggplot2::element_text(hjust = 0),
                    panel.grid.minor = ggplot2::element_blank())
   finish_title(p)
 }
 
-plot_loadings_plotly <- function(curves, peaks, background, x_lab, y_lab, title) {
+plot_loadings_plotly <- function(curves, peaks, background, style) {
   rlang::check_installed("plotly", reason = "for interactive plots.")
   # NA between detector segments, so that they are not joined
   with_breaks <- function(cv, column) {
@@ -515,7 +522,8 @@ plot_loadings_plotly <- function(curves, peaks, background, x_lab, y_lab, title)
     }
     line <- with_breaks(cv, "value")
     p <- plotly::add_trace(p, x = line$wavelength, y = line$value, type = "scattergl",
-                           mode = "lines", line = list(color = "#404040", width = 1),
+                           mode = "lines",
+                           line = list(color = "#404040", width = plotly_width(style$linewidth)),
                            name = panel, hoverinfo = "x+y", showlegend = FALSE)
     pk <- peaks[peaks$panel == panel, ]
     if (nrow(pk) > 0) {
@@ -529,5 +537,6 @@ plot_loadings_plotly <- function(curves, peaks, background, x_lab, y_lab, title)
     plotly::layout(p, yaxis = list(title = panel, zeroline = TRUE))
   })
   p <- plotly::subplot(plots, nrows = length(plots), shareX = TRUE, titleY = TRUE)
-  plotly::layout(p, title = plotly_title(title), xaxis = list(title = x_lab), hovermode = "closest")
+  plotly::layout(p, title = plotly_title(style$title), xaxis = list(title = style$x_lab),
+                 hovermode = "closest")
 }

@@ -41,12 +41,32 @@
 #' These formulas are explicitly derived and optimized for the scenario where `k = 1.5` (Hubert and Vandervieren, 2008).
 #' Consequently, if the user attempts to use a value of `k` other than 1.5, the code will issue a warning message indicating that the formula is only defined for `k = 1.5`.
 #' In such cases, the code will automatically reset `k` to 1.5 and proceed with the calculations using the appropriate formulas and constants.
-#' @param drop.na A logical value indicating whether to remove missing values (\code{NA}) from the calculations. If \code{TRUE}, missing values will be removed. If \code{FALSE} (the default), missing values are kept in the output (with a missing flag) and ignored when computing the fences.
+#' @param drop_na A logical value indicating whether to remove missing values (\code{NA}) from the calculations. If \code{TRUE}, missing values will be removed. If \code{FALSE} (the default), missing values are kept in the output (with a missing flag) and ignored when computing the fences.
+#' @param drop.na `r lifecycle::badge("deprecated")` Use `drop_na`.
 #'
 #' @return A tibble with two columns:
 #'   - `data`: The original numeric values.
 #'   - `flag`: A logical vector indicating whether each value is a potential outlier or not.
+#' @seealso [medcouple()], [adjusted_boxplot()], [directional_outlyingness()]
+#'
 #' @examples
+#' # 200 right-skewed values (a gamma distribution shifted to start at 100),
+#' # 3 low outliers below them and 3 high outliers
+#' set.seed(1)
+#' x <- c(100 + rgamma(200, shape = 2, scale = 10), 85, 87, 89, 220, 230, 240)
+#' group <- rep(c("regular", "outlier"), c(200, 6))
+#' ggplot2::ggplot(data.frame(x, group), ggplot2::aes(x)) +
+#'   ggplot2::geom_density(fill = "#2166ac", alpha = 0.3) +
+#'   ggplot2::geom_rug(ggplot2::aes(colour = group)) +
+#'   ggplot2::scale_colour_manual(values = c(outlier = "#b2182b", regular = "#2166ac"))
+#' medcouple(x)   # positive: skewed to the right
+#'
+#' # symmetric fences: the upper fence flags regular values of the long tail,
+#' # and the lower fence lies below the low outliers
+#' subset(iqr_outliers(x), flag)
+#' # fences adjusted for the skewness: the 6 outliers, and no regular value
+#' subset(iqr_outliers(x, skew = TRUE), flag)
+#'
 #' data(forageLIBS)
 #' # iron contents (mg/kg): a few samples are far above the others
 #' fe <- forageLIBS$Fe[!is.na(forageLIBS$Fe)]
@@ -55,13 +75,13 @@
 #'
 #' @export iqr_outliers
 #'
-iqr_outliers <- function(x, k = 1.5, skew = FALSE, drop.na = FALSE) {
+iqr_outliers <- function(x, k = 1.5, skew = FALSE, drop_na = FALSE,
+                         drop.na = deprecated()) {
+  drop_na <- renamed_arg(drop.na, drop_na, "iqr_outliers", "drop.na", "drop_na")
   if (missing(x)) {
     stop("Missing 'x' argument.")
   }
-  if (!is.numeric(x)) {
-    stop("The input 'x' must be a numeric vector.")
-  }
+  check_numeric_vector(x, "iqr_outliers")
   if (!is.numeric(k) || length(k) != 1 || k <= 0) {
     stop("The input 'k' must be a positive numeric scalar.")
   }
@@ -69,7 +89,7 @@ iqr_outliers <- function(x, k = 1.5, skew = FALSE, drop.na = FALSE) {
     stop("'skew' must be of type boolean (TRUE or FALSE)")
   }
 
-  if (drop.na) {
+  if (drop_na) {
     x <- x[!is.na(x)]
   }
 
@@ -86,7 +106,7 @@ iqr_outliers <- function(x, k = 1.5, skew = FALSE, drop.na = FALSE) {
     lower_fence <- q1 - k * iqr
     upper_fence <- q3 + k * iqr
   } else {
-    mc_x <- medcouple(x)
+    mc_x <- medcouple(x, drop_na = TRUE)
     alpha <- if (mc_x >= 0) 4 else 3
     beta <- if (mc_x >= 0) 3 else 4
 

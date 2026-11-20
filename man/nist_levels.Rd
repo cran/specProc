@@ -51,13 +51,14 @@ for atoms with many high Rydberg levels close to the limit, such as the
 alkali metals (see \code{\link[=cf_libs]{cf_libs()}}, which does it). Without truncation, the
 result equals the partition function computed by the ASD.
 
-The results of a query are cached for the R session. Cite the database
+The results of a query are cached for the R session, and between sessions
+with the persistent cache (see \code{\link[=download_cache]{download_cache()}}). Cite the database
 when you use these data (see \code{\link[=nist_lines]{nist_lines()}}).
 }
 \examples{
 \donttest{
-# needs an internet connection
-ca <- try(nist_levels("Ca I"))
+# needs an internet connection; gives up after 20 s if NIST does not answer
+ca <- try(nist_levels("Ca I", timeout = 20))
 if (!inherits(ca, "try-error")) partition_function(ca, temperature = c(8000, 10000))
 }
 }

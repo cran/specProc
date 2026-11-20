@@ -17,20 +17,25 @@
 #'    directions through pairs of observations, using the univariate MCD
 #'    location and scale on each direction. The `h` least outlying
 #'    observations form the subset \eqn{H_0}.
-#' 3. The number of components `k` is chosen (if not given) as the smallest
-#'    number that explains `var_explained` of the variance of \eqn{H_0}, with
-#'    at most `kmax`. Observations whose orthogonal distance to the
-#'    \eqn{k}-dimensional PCA subspace of \eqn{H_0} is below the cut-off form
-#'    \eqn{H_1}, and the subspace is re-estimated from \eqn{H_1}.
+#' 3. The number of components \eqn{k} (`ncomp`) is chosen (if not given) as
+#'    the smallest number that explains `var_explained` of the variance of
+#'    \eqn{H_0}, with at most `ncomp_max`. Observations whose orthogonal
+#'    distance to the \eqn{k}-dimensional PCA subspace of \eqn{H_0} is below
+#'    the cut-off form \eqn{H_1}, and the subspace is re-estimated from
+#'    \eqn{H_1}. When `ncomp` equals the rank of the data, this subspace is the whole space and
+#'    \eqn{H_1 = H_0}.
 #' 4. All observations are projected onto this subspace, and the reweighted
 #'    FAST-MCD estimator of the scores gives the final center, loadings and
-#'    eigenvalues.
+#'    eigenvalues. When `ncomp` equals the rank, this is the reweighted MCD of the
+#'    data.
 #'
 #' Each observation then has a score distance (SD), its robust Mahalanobis
 #' distance within the PCA subspace, and an orthogonal distance (OD) to the
 #' subspace. The cut-off for the SD is \eqn{\sqrt{\chi^2_{k,0.975}}}; the
 #' cut-off for the OD uses the Wilson-Hilferty approximation, with the
-#' univariate MCD of \eqn{OD^{2/3}}. [plot_outlier_map()] plots both.
+#' univariate MCD of \eqn{OD^{2/3}}. When `ncomp` equals the rank, the ODs and
+#' their cut-off are zero: there are no orthogonal outliers.
+#' [plot_outlier_map()] plots both distances.
 #'
 #' This is an independent implementation of the published algorithm, not a
 #' port of the rospca or rrcov code, so its results can differ slightly from
@@ -39,21 +44,25 @@
 #' results.
 #'
 #' @param x A numeric matrix or data frame, with one observation per row.
-#' @param k The number of principal components. If `NULL` (default), it is
-#'   chosen from `var_explained` and `kmax`.
-#' @param kmax The maximum number of components. Default is 10.
+#' @param ncomp The number of principal components. If `NULL` (default), it
+#'   is chosen from `var_explained` and `ncomp_max`.
+#' @param ncomp_max The maximum number of components. Default is 10.
 #' @param alpha The robustness parameter: the fraction of observations the
 #'   estimates are based on, between 0.5 and 1. Default is 0.75. The subset
-#'   size is \eqn{h = \max(\lfloor\alpha n\rfloor, \lfloor(n + k_{max} + 1)/2\rfloor)}.
+#'   size is \eqn{h = \max(\lfloor\alpha n\rfloor, \lfloor(n + k_{max} + 1)/2\rfloor)},
+#'   with \eqn{k_{max}} = `ncomp_max`.
 #' @param ndir The number of random directions used for the outlyingness.
 #'   Default is 250; use `"all"` for all directions through pairs of
 #'   observations.
-#' @param var_explained The fraction of variance used to choose `k` when it
-#'   is not given. Default is 0.8.
+#' @param var_explained The fraction of variance used to choose `ncomp` when
+#'   it is not given. Default is 0.8.
 #' @param nsamp The number of random subsets of FAST-MCD. Default is 500.
+#' @param k `r lifecycle::badge("deprecated")` Use `ncomp`.
+#' @param kmax `r lifecycle::badge("deprecated")` Use `ncomp_max`.
 #'
 #' @return An object of class `specproc_robpca`, a list with:
-#'  - `loadings`: \eqn{p \times k} matrix of robust loadings.
+#'  - `loadings`: \eqn{p \times k} matrix of robust loadings, the largest
+#'    element of each loading vector positive.
 #'  - `eigenvalues`: robust eigenvalues (variances of the scores).
 #'  - `center`: robust center.
 #'  - `scores`: \eqn{n \times k} matrix of scores.
@@ -62,7 +71,7 @@
 #'  - `outlier_type`: a factor classifying each observation as `"regular"`,
 #'    `"good leverage"` (high SD only), `"orthogonal outlier"` (high OD only)
 #'    or `"bad leverage"` (both).
-#'  - `k`, `h`, `alpha`: the settings used.
+#'  - `ncomp`, `h`, `alpha`: the settings used.
 #'  - `H0`, `H1`: logical vectors of the observations in the subsets
 #'    \eqn{H_0} and \eqn{H_1}.
 #'
@@ -91,47 +100,57 @@
 #'   robpca() |>
 #'   print()
 #'
-robpca <- function(x, k = NULL, kmax = 10, alpha = 0.75, ndir = 250, var_explained = 0.8, nsamp = 500) {
+robpca <- function(x, ncomp = NULL, ncomp_max = 10, alpha = 0.75, ndir = 250, var_explained = 0.8, nsamp = 500,
+                   k = deprecated(), kmax = deprecated()) {
+  ncomp <- renamed_arg(k, ncomp, "robpca", "k", "ncomp")
+  ncomp_max <- renamed_arg(kmax, ncomp_max, "robpca", "kmax", "ncomp_max")
   x <- robust_pca_input(x)
   n <- nrow(x)
-  check_robust_args(k, kmax, alpha, var_explained)
+  check_robust_args(ncomp, ncomp_max, alpha, var_explained)
 
   red <- svd_reduce(x)
   z <- red$z
   r <- ncol(z)
-  kmax <- min(kmax, r, n - 1)
-  if (!is.null(k) && k > kmax) {
-    warning("'k' reduced to ", kmax, ".", call. = FALSE)
-    k <- kmax
+  ncomp_max <- min(ncomp_max, r, n - 1)
+  if (!is.null(ncomp) && ncomp > ncomp_max) {
+    warning("'ncomp' reduced to ", ncomp_max, ".", call. = FALSE)
+    ncomp <- ncomp_max
   }
-  h <- robust_h(n, alpha, kmax)
+  h <- robust_h(n, alpha, ncomp_max)
 
   # Step 1: h least outlying observations
   H0 <- least_outlying(z, h, ndir)
   e0 <- eigen(stats::cov(z[H0, , drop = FALSE]), symmetric = TRUE)
-  if (is.null(k)) {
-    k <- choose_k(e0$values, kmax, var_explained)
+  if (is.null(ncomp)) {
+    ncomp <- choose_ncomp(e0$values, ncomp_max, var_explained)
   }
 
-  # Step 2: reweighting on the orthogonal distances to the H0 subspace
-  m0 <- colMeans(z[H0, , drop = FALSE])
-  od0 <- orthogonal_distance(sweep(z, 2, m0), e0$vectors[, seq_len(k), drop = FALSE])
-  H1 <- od0 <= od_cutoff(od0, h)
+  # Step 2: reweighting on the orthogonal distances to the H0 subspace. When
+  # ncomp equals the rank, the subspace is the whole space and the distances are
+  # zero: H1 = H0, and step 3 gives the reweighted MCD of the data.
+  H1 <- seq_len(n) %in% H0
+  if (ncomp < r) {
+    m0 <- colMeans(z[H0, , drop = FALSE])
+    od0 <- orthogonal_distance(sweep(z, 2, m0), e0$vectors[, seq_len(ncomp), drop = FALSE])
+    H1 <- od0 <= od_cutoff(od0, h)
+  }
   m1 <- colMeans(z[H1, , drop = FALSE])
-  p1 <- eigen(stats::cov(z[H1, , drop = FALSE]), symmetric = TRUE)$vectors[, seq_len(k), drop = FALSE]
+  p1 <- eigen(stats::cov(z[H1, , drop = FALSE]), symmetric = TRUE)$vectors[, seq_len(ncomp), drop = FALSE]
 
-  # Step 3: MCD of the scores in the k-dimensional subspace
+  # Step 3: MCD of the scores in the PCA subspace
   t1 <- sweep(z, 2, m1) %*% p1
   mcd <- fast_mcd_cpp(t1, h, as.integer(nsamp))
   if (isTRUE(mcd$singular)) {
     stop("More than h observations lie on a lower-dimensional subspace of the ",
-         k, "-dimensional PCA space; try a smaller 'k'.", call. = FALSE)
+         ncomp, "-dimensional PCA space; try a smaller 'ncomp'.", call. = FALSE)
   }
   e2 <- eigen(mcd$cov, symmetric = TRUE)
   p2 <- p1 %*% e2$vectors
   center_z <- m1 + drop(p1 %*% mcd$center)
 
   loadings <- red$v %*% p2
+  # largest element of each loading vector positive
+  loadings <- sweep(loadings, 2, apply(loadings, 2, function(v) if (v[which.max(abs(v))] < 0) -1 else 1), "*")
   center <- red$center + drop(red$v %*% center_z)
   names(center) <- colnames(x)
   res <- list(
@@ -139,7 +158,7 @@ robpca <- function(x, k = NULL, kmax = 10, alpha = 0.75, ndir = 250, var_explain
     eigenvalues = e2$values,
     center = center,
     scale = rep(1, ncol(x)),
-    k = as.integer(k),
+    ncomp = as.integer(ncomp),
     h = as.integer(h),
     alpha = alpha,
     H0 = seq_len(n) %in% H0,
@@ -164,15 +183,20 @@ robpca <- function(x, k = NULL, kmax = 10, alpha = 0.75, ndir = 250, var_explain
 #' The algorithm follows the published description in three steps:
 #' 1. **Outlier detection.** The variables are robustly standardized (median
 #'    and \eqn{Q_n}) if `stand = TRUE`. As in [robpca()], the `h` least
-#'    outlying observations form \eqn{H_0}, and those whose orthogonal
-#'    distance to the \eqn{k}-dimensional PCA subspace of \eqn{H_0} is below
-#'    the cut-off form \eqn{H_1}
+#'    outlying observations form \eqn{H_0}, the number of components
+#'    \eqn{k} (`ncomp`) is chosen (if not given) as the smallest number that
+#'    explains `var_explained` of the variance of \eqn{H_0}, with at most
+#'    `ncomp_max`, and the observations whose orthogonal distance to the
+#'    \eqn{k}-dimensional PCA subspace of \eqn{H_0} is below the cut-off form
+#'    \eqn{H_1} (\eqn{H_1 = H_0} when `ncomp` equals the rank of the data, as
+#'    the subspace is then the whole space).
 #' 2. **Sparsification.** The observations of \eqn{H_1} are standardized and
 #'    the sparse loadings are computed by maximizing, component by component,
 #'    the variance of the scores minus `lambda` times the \eqn{L_1} norm of
 #'    the loadings. Variables with zero loadings on all components are set
 #'    aside; the observations whose orthogonal distance to the sparse
-#'    subspace is below the cut-off form \eqn{H_2}, and the sparse loadings
+#'    subspace is below the cut-off form \eqn{H_2} (\eqn{H_2 = H_1} when the
+#'    sparse subspace contains all the observations), and the sparse loadings
 #'    are recomputed from \eqn{H_2}, standardized in turn.
 #' 3. **Eigenvalues and center.** The eigenvalues are first estimated by the
 #'    squared \eqn{Q_n} of the scores of \eqn{H_2}. The `h` observations of
@@ -192,13 +216,14 @@ robpca <- function(x, k = NULL, kmax = 10, alpha = 0.75, ndir = 250, var_explain
 #' `rospca::rospca()`.
 #'
 #' @inheritParams robpca
-#' @param k The number of principal components. Default is 2.
 #' @param lambda A non-negative number: the sparsity parameter. Default is 1.
 #' @param stand A logical value: standardize the variables robustly (median
 #'   and \eqn{Q_n}) before the analysis (`FALSE`, default) or only center them
 #'   by their median.
 #' @param ngrid The number of angles in the grid search. Default is 10.
 #' @param maxiter The maximum number of grid refinements per component.
+#'   Default is 10.
+#' @param ncomp_max The maximum number of components when `ncomp` is chosen.
 #'   Default is 10.
 #'
 #' @return An object of class `specproc_rospca` (inheriting from
@@ -228,13 +253,13 @@ robpca <- function(x, k = NULL, kmax = 10, alpha = 0.75, ndir = 250, var_explain
 #'   rospca() |>
 #'   print()
 #'
-rospca <- function(x, k = 2, lambda = 1, alpha = 0.75, ndir = 250, stand = FALSE,
-                   ngrid = 10, maxiter = 10) {
+rospca <- function(x, ncomp = NULL, lambda = 1, alpha = 0.75, ndir = 250, stand = FALSE,
+                   ngrid = 10, maxiter = 10, ncomp_max = 10, var_explained = 0.8, k = deprecated()) {
+  ncomp <- renamed_arg(k, ncomp, "rospca", "k", "ncomp")
   x <- robust_pca_input(x)
   n <- nrow(x)
   p <- ncol(x)
-  check_count(k, "k")
-  check_robust_args(k, max(k, 1), alpha, 0.5)
+  check_robust_args(ncomp, ncomp_max, alpha, var_explained)
   check_number(lambda, "lambda", lower = 0)
   check_flag(stand, "stand")
   check_count(ngrid, "ngrid", lower = 2)
@@ -246,15 +271,26 @@ rospca <- function(x, k = 2, lambda = 1, alpha = 0.75, ndir = 250, stand = FALSE
   xs <- sweep(sweep(x, 2, med), 2, scl, "/")
   red <- svd_reduce(xs)
   z <- red$z
-  if (k > min(ncol(z), n - 1)) {
-    stop("'k' cannot exceed the rank of the data (", min(ncol(z), n - 1), ").", call. = FALSE)
+  rank <- min(ncol(z), n - 1)
+  if (!is.null(ncomp) && ncomp > rank) {
+    stop("'ncomp' cannot exceed the rank of the data (", rank, ").", call. = FALSE)
   }
-  h <- robust_h(n, alpha, k)
+  # ncomp_max only bounds the choice: a given ncomp sets h, as in macropca()
+  ncomp_max <- min(ncomp_max, rank)
+  h <- robust_h(n, alpha, if (is.null(ncomp)) ncomp_max else ncomp)
   H0 <- least_outlying(z, h, ndir)
-  m0 <- colMeans(z[H0, , drop = FALSE])
-  v0 <- eigen(stats::cov(z[H0, , drop = FALSE]), symmetric = TRUE)$vectors[, seq_len(k), drop = FALSE]
-  od0 <- orthogonal_distance(sweep(z, 2, m0), v0)
-  H1 <- od0 <= od_cutoff(od0, h)
+  e0 <- eigen(stats::cov(z[H0, , drop = FALSE]), symmetric = TRUE)
+  if (is.null(ncomp)) {
+    ncomp <- choose_ncomp(e0$values, ncomp_max, var_explained)
+  }
+  # when ncomp equals the rank, the subspace is the whole space: H1 = H0
+  H1 <- seq_len(n) %in% H0
+  if (ncomp < ncol(z)) {
+    m0 <- colMeans(z[H0, , drop = FALSE])
+    v0 <- e0$vectors[, seq_len(ncomp), drop = FALSE]
+    od0 <- orthogonal_distance(sweep(z, 2, m0), v0)
+    H1 <- od0 <= od_cutoff(od0, h)
+  }
 
   # Step 2: sparse PCA on H1, reweighting, sparse PCA on H2. Each subset is
   # standardized by its own mean and standard deviation.
@@ -265,18 +301,20 @@ rospca <- function(x, k = 2, lambda = 1, alpha = 0.75, ndir = 250, stand = FALSE
     list(center = mu, scale = sdev, z = sweep(sweep(xs, 2, mu), 2, sdev, "/"))
   }
   sparse_fit <- function(z, rows, vars) {
-    a <- spca_grid_cpp(z[rows, vars, drop = FALSE], as.integer(k), lambda,
+    a <- spca_grid_cpp(z[rows, vars, drop = FALSE], as.integer(ncomp), lambda,
                        as.integer(ngrid), as.integer(maxiter), 1e-5)
-    loadings <- matrix(0, p, k)
+    loadings <- matrix(0, p, ncomp)
     loadings[vars, ] <- a
     loadings
   }
   s1 <- standardize_on(H1)
   p1 <- sparse_fit(s1$z, H1, seq_len(p))
   index <- which(rowSums(p1 != 0) > 0)
-  # distances in the full space: deviations in the discarded variables count
+  # distances in the full space: deviations in the discarded variables count.
+  # They are all zero when the sparse subspace contains the data (ncomp equal
+  # to the rank): H2 = H1.
   od1 <- orthogonal_distance(s1$z, p1)
-  H2 <- od1 <= od_cutoff(od1, h)
+  H2 <- if (any(od1 > 0)) od1 <= od_cutoff(od1, h) else H1
   s2 <- standardize_on(H2)
   loadings <- sparse_fit(s2$z, H2, index)
 
@@ -301,7 +339,7 @@ rospca <- function(x, k = 2, lambda = 1, alpha = 0.75, ndir = 250, stand = FALSE
     eigenvalues = eigenvalues[ord],
     center = center,
     scale = stats::setNames(scale_total, colnames(x)),
-    k = as.integer(k),
+    ncomp = as.integer(ncomp),
     h = as.integer(h),
     alpha = alpha,
     lambda = lambda,
@@ -349,9 +387,9 @@ rospca <- function(x, k = 2, lambda = 1, alpha = 0.75, ndir = 250, stand = FALSE
 #'     `h` least outlying observations not set aside form \eqn{H_0}.
 #'  3. **Subspace dimension.** A classical PCA of the observations of
 #'     \eqn{H_0}, with their flagged and missing cells imputed, gives the
-#'     eigenvalues: when `k` is `NULL`, it is the smallest number of
+#'     eigenvalues: when `ncomp` is `NULL`, it is the smallest number of
 #'     components that explain `var_explained` of their variance (at most
-#'     `kmax`).
+#'     `ncomp_max`).
 #'  4. **Iterative subspace estimation.** The flagged and missing cells are
 #'     imputed by the fitted values of the current PCA, and the PCA of
 #'     \eqn{H_0} is refitted, until the largest angle between the old and
@@ -382,13 +420,13 @@ rospca <- function(x, k = 2, lambda = 1, alpha = 0.75, ndir = 250, stand = FALSE
 #'
 #' @param x A numeric matrix or data frame, with one observation per row.
 #'   Missing values are allowed.
-#' @param k The number of principal components. If `NULL` (default), it is
-#'   chosen from `var_explained` and `kmax`.
+#' @param ncomp The number of principal components. If `NULL` (default), it
+#'   is chosen from `var_explained` and `ncomp_max`.
 #' @param alpha The robustness parameter, between 0.5 and 1: the fraction of
 #'   observations used in the fit. Default is 0.5.
-#' @param kmax The maximum number of components. Default is 10.
-#' @param var_explained The fraction of variance used to choose `k` when it
-#'   is not given. Default is 0.8.
+#' @param ncomp_max The maximum number of components. Default is 10.
+#' @param var_explained The fraction of variance used to choose `ncomp` when
+#'   it is not given. Default is 0.8.
 #' @param scale A logical: scale the variables by their robust scale (`FALSE`,
 #'   default: they are only centered, so that intense emission lines are
 #'   not outweighed by noise and continuum channels).
@@ -397,6 +435,8 @@ rospca <- function(x, k = 2, lambda = 1, alpha = 0.75, ndir = 250, stand = FALSE
 #' @param maxiter,tol The maximum number of iterations of step 4, and the
 #'   tolerance on the largest angle between successive subspaces (as a
 #'   fraction of a right angle). Defaults are 20 and 0.005, as in the paper.
+#' @param k `r lifecycle::badge("deprecated")` Use `ncomp`.
+#' @param kmax `r lifecycle::badge("deprecated")` Use `ncomp_max`.
 #'
 #' @return An object of class `specproc_macropca` (inheriting from
 #'   `specproc_robpca`), with the components described in [robpca()], and:
@@ -429,18 +469,21 @@ rospca <- function(x, k = 2, lambda = 1, alpha = 0.75, ndir = 250, stand = FALSE
 #'
 #' @examples
 #' \donttest{
+#' data(forageLIBS)
+#' # the 380-430 nm window (Ca II H and K lines), faster than all the channels
+#' wl <- suppressWarnings(as.numeric(names(forageLIBS)))
+#' spectra <- forageLIBS[which(wl > 380 & wl < 430)]
 #' set.seed(1)
-#' # LIBS spectra of forage samples
-#' minerals <- c("Ca", "Cl", "Cu", "Fe", "Mg", "Mn", "Mo", "P", "K", "Na", "S", "Zn")
-#' forageLIBS |>
-#'   dplyr::select(-Measurement, -Sample, -dplyr::all_of(minerals)) |>
+#' spectra |>
 #'   center() |>
 #'   macropca() |>
 #'   print()
 #' }
 #'
-macropca <- function(x, k = NULL, alpha = 0.5, kmax = 10, var_explained = 0.8, scale = FALSE,
-                     ndir = 250, maxiter = 20, tol = 0.005) {
+macropca <- function(x, ncomp = NULL, alpha = 0.5, ncomp_max = 10, var_explained = 0.8, scale = FALSE,
+                     ndir = 250, maxiter = 20, tol = 0.005, k = deprecated(), kmax = deprecated()) {
+  ncomp <- renamed_arg(k, ncomp, "macropca", "k", "ncomp")
+  ncomp_max <- renamed_arg(kmax, ncomp_max, "macropca", "kmax", "ncomp_max")
   if (missing(x)) {
     stop("Missing 'x' argument.")
   }
@@ -449,19 +492,19 @@ macropca <- function(x, k = NULL, alpha = 0.5, kmax = 10, var_explained = 0.8, s
   if (nrow(x) < 5 || ncol(x) < 2) {
     stop("At least 5 observations and 2 variables are needed.", call. = FALSE)
   }
-  check_robust_args(k, kmax, alpha, var_explained)
+  check_robust_args(ncomp, ncomp_max, alpha, var_explained)
   check_flag(scale, "scale")
   check_count(maxiter, "maxiter")
   check_number(tol, "tol", lower = 0, lower_open = TRUE)
   if (!identical(ndir, "all")) check_count(ndir, "ndir")
   n <- nrow(x)
   d <- ncol(x)
-  kmax <- min(kmax, d)
-  if (!is.null(k) && k > kmax) {
-    warning("'k' reduced to ", kmax, ".", call. = FALSE)
-    k <- kmax
+  ncomp_max <- min(ncomp_max, d)
+  if (!is.null(ncomp) && ncomp > ncomp_max) {
+    warning("'ncomp' reduced to ", ncomp_max, ".", call. = FALSE)
+    ncomp <- ncomp_max
   }
-  h <- h_alpha_n(alpha, n, if (is.null(k)) kmax else k)
+  h <- h_alpha_n(alpha, n, if (is.null(ncomp)) ncomp_max else ncomp)
   missing_cells <- is.na(x)
 
   # Deviating cells, and the most outlying of the rows flagged by DDC
@@ -496,12 +539,12 @@ macropca <- function(x, k = NULL, alpha = 0.5, kmax = 10, var_explained = 0.8, s
 
   # Step 3: subspace dimension, from the PCA of the cell-imputed rows of H0
   pca <- trunc_pc(x_ci[H0, , drop = FALSE])
-  kmax <- min(pca$rank, kmax)
-  if (is.null(k)) {
-    k <- choose_k(pca$eigenvalues, kmax, var_explained)
+  ncomp_max <- min(pca$rank, ncomp_max)
+  if (is.null(ncomp)) {
+    ncomp <- choose_ncomp(pca$eigenvalues, ncomp_max, var_explained)
   }
-  k <- min(k, pca$rank)
-  loadings <- pca$loadings[, seq_len(k), drop = FALSE]
+  ncomp <- min(ncomp, pca$rank)
+  loadings <- pca$loadings[, seq_len(ncomp), drop = FALSE]
   center <- pca$center
 
   # Step 4: iterative subspace estimation, imputing the flagged and missing
@@ -512,9 +555,9 @@ macropca <- function(x, k = NULL, alpha = 0.5, kmax = 10, var_explained = 0.8, s
       iterations <- iterations + 1
       fitted <- pca_fitted(x_ci, center, loadings)
       x_ci[imputable] <- fitted[imputable]
-      pca <- trunc_pc(x_ci[H0, , drop = FALSE], k)
-      k <- min(k, pca$rank)
-      new_loadings <- pca$loadings[, seq_len(k), drop = FALSE]
+      pca <- trunc_pc(x_ci[H0, , drop = FALSE], ncomp)
+      ncomp <- min(ncomp, pca$rank)
+      new_loadings <- pca$loadings[, seq_len(ncomp), drop = FALSE]
       change <- max_angle(new_loadings, loadings)
       loadings <- new_loadings
       center <- pca$center
@@ -528,12 +571,12 @@ macropca <- function(x, k = NULL, alpha = 0.5, kmax = 10, var_explained = 0.8, s
   x_ci[-H0, ] <- x_na[-H0, ]
 
   # Step 5: reweighting on the orthogonal distances of the cell-imputed data
-  if (k < rank) {
+  if (ncomp < rank) {
     od <- orthogonal_distance(sweep(x_ci, 2, center), loadings)
     H_star <- od <= od_cutoff_unimcd(od, alpha)
     H_star[rows_ddc] <- FALSE
-    pca <- trunc_pc(x_fi[H_star, , drop = FALSE], k)
-    k <- min(pca$rank, k)
+    pca <- trunc_pc(x_fi[H_star, , drop = FALSE], ncomp)
+    ncomp <- min(pca$rank, ncomp)
   } else {
     H_star <- seq_len(n) %in% H0
   }
@@ -542,40 +585,43 @@ macropca <- function(x, k = NULL, alpha = 0.5, kmax = 10, var_explained = 0.8, s
 
   # Step 6: center and basis within the subspace (C-steps, then DetMCD)
   center <- pca$center
-  rot <- pca$loadings[, seq_len(k), drop = FALSE]
+  rot <- pca$loadings[, seq_len(ncomp), drop = FALSE]
   n1 <- sum(H_star)
-  h1 <- h_alpha_n(alpha, n1, k)
+  h1 <- h_alpha_n(alpha, n1, ncomp)
   scores1 <- sweep(x_ci[H_star, , drop = FALSE], 2, pca$center) %*% rot
-  mah <- mahalanobis_diag(scores1, pca$eigenvalues[seq_len(k)])
-  old_obj <- prod(pca$eigenvalues[seq_len(k)])
+  mah <- mahalanobis_diag(scores1, pca$eigenvalues[seq_len(ncomp)])
+  # the objective is the log-determinant, and the C-steps stop when its
+  # relative change is below 1e-12 (an absolute change of the determinant in
+  # cellWise), so that they do not depend on the units of the data
+  old_obj <- sum(log(pca$eigenvalues[seq_len(ncomp)]))
   for (j in seq_len(100)) {
-    sub <- trunc_pc(scores1[order(mah)[seq_len(h1)], , drop = FALSE], k)
-    obj <- prod(sub$eigenvalues)
+    sub <- trunc_pc(scores1[order(mah)[seq_len(h1)], , drop = FALSE], ncomp)
+    obj <- sum(log(sub$eigenvalues))
     scores1 <- sweep(scores1, 2, sub$center) %*% sub$loadings
     center <- center + drop(rot %*% sub$center)
     rot <- rot %*% sub$loadings
     mah <- mahalanobis_diag(scores1, sub$eigenvalues)
-    if (sub$rank == k && abs(old_obj - obj) < 1e-12) break
+    if (sub$rank == ncomp && abs(old_obj - obj) < 1e-12) break
     old_obj <- obj
-    k <- min(k, sub$rank)
+    ncomp <- min(ncomp, sub$rank)
   }
-  k <- ncol(rot)
-  inner <- final_mcd(scores1, h1 / n1, obj, mah, k)
+  ncomp <- ncol(rot)
+  inner <- final_mcd(scores1, h1 / n1, mah, ncomp)
   e <- eigen(inner$cov, symmetric = TRUE)
   center <- center + drop(rot %*% inner$center)
   loadings <- rot %*% e$vectors
   loadings <- sweep(loadings, 2, apply(loadings, 2, function(v) if (v[which.max(abs(v))] < 0) -1 else 1), "*")
   names(center) <- colnames(x)
-  dimnames(loadings) <- list(colnames(x), paste0("PC", seq_len(k)))
+  dimnames(loadings) <- list(colnames(x), paste0("PC", seq_len(ncomp)))
 
   # Step 7: scores and distances of the NA-imputed data; cut-off of the
   # orthogonal distances from the cell-imputed data
   res <- list(loadings = loadings, eigenvalues = e$values, center = center, scale = sc,
-              k = as.integer(k), h = as.integer(h), alpha = alpha, cutoff = cells$cutoff,
+              ncomp = as.integer(ncomp), h = as.integer(h), alpha = alpha, cutoff = cells$cutoff,
               rank = rank, iterations = iterations)
   od_ci <- orthogonal_distance(sweep(x_ci, 2, center), loadings)
-  res$cutoff_od <- if (k < rank) od_cutoff_unimcd(od_ci, alpha) else 0
-  res$cutoff_sd <- sqrt(stats::qchisq(0.99, k))
+  res$cutoff_od <- if (ncomp < rank) od_cutoff_unimcd(od_ci, alpha) else 0
+  res$cutoff_sd <- sqrt(stats::qchisq(0.99, ncomp))
 
   # Step 8: standardized residuals of the observed cells
   dist <- macropca_distances(res, x_na, x_obs)
@@ -609,7 +655,7 @@ macropca <- function(x, k = NULL, alpha = 0.5, kmax = 10, var_explained = 0.8, s
 #'
 #' @details
 #' cellPCA approximates the data by a fit \eqn{\hat{X} = 1_n \mu^T + U V^T}
-#' of rank `k` that minimizes
+#' of rank \eqn{k} (`ncomp`) that minimizes
 #' \deqn{\hat\sigma_2^2 \frac{1}{n} \sum_{i=1}^n m_i \rho_2\left(\frac{t_i}{\hat\sigma_2}\right),
 #' \quad t_i = \sqrt{\frac{1}{m_i} \sum_{j=1}^p m_{ij} \hat\sigma_{1,j}^2
 #' \rho_1\left(\frac{x_{ij} - \hat{x}_{ij}}{\hat\sigma_{1,j}}\right)}}
@@ -627,8 +673,8 @@ macropca <- function(x, k = NULL, alpha = 0.5, kmax = 10, var_explained = 0.8, s
 #' \eqn{c}.
 #'
 #' The algorithm follows the reference code of the authors:
-#'  1. **Initial fit.** A [macropca()] fit (with `alpha`, `kmax`,
-#'     `var_explained`, `scale` and `ndir`), which also chooses `k` when it
+#'  1. **Initial fit.** A [macropca()] fit (with `alpha`, `ncomp_max`,
+#'     `var_explained`, `scale` and `ndir`), which also chooses `ncomp` when it
 #'     is `NULL`, with its scores computed from the data whose flagged and
 #'     missing cells are imputed by the fit.
 #'  2. **Scales.** \eqn{\hat\sigma_{1,j}} is the M-scale of the residuals of
@@ -646,7 +692,7 @@ macropca <- function(x, k = NULL, alpha = 0.5, kmax = 10, var_explained = 0.8, s
 #'  4. **Principal directions.** The center and the eigenvectors within the
 #'     subspace are estimated by the deterministic MCD of the scores of the
 #'     observations with a non-zero casewise weight (the exact MCD when
-#'     `k = 1`), and the sign of each loading vector is set so that its
+#'     `ncomp = 1`), and the sign of each loading vector is set so that its
 #'     largest element is positive.
 #'
 #' The residuals of each variable are then standardized by their M-scale,
@@ -710,14 +756,16 @@ macropca <- function(x, k = NULL, alpha = 0.5, kmax = 10, var_explained = 0.8, s
 #' wl <- suppressWarnings(as.numeric(names(forageLIBS)))
 #' spectra <- forageLIBS[which(wl > 760 & wl < 780)]
 #' set.seed(1)
-#' fit <- cellpca(spectra, k = 2, od_cutoff = "chisq")
+#' fit <- cellpca(spectra, ncomp = 2, od_cutoff = "chisq")
 #' fit
-#' plot_outlier_map(fit, shade = TRUE, relative = TRUE, log = TRUE, colour_by = "distance")
+#' plot_outlier_map(fit, shade = TRUE, relative = TRUE, log = TRUE, color_by = "distance")
 #' plot_cell_map(fit, order = "od")
 #'
-cellpca <- function(x, k = NULL, alpha = 0.5, kmax = 10, var_explained = 0.8, scale = FALSE,
+cellpca <- function(x, ncomp = NULL, alpha = 0.5, ncomp_max = 10, var_explained = 0.8, scale = FALSE,
                     ndir = 250, maxiter = 1000, tol = 1e-6, max_col_frac = 0.5,
-                    od_cutoff = c("simulated", "chisq")) {
+                    od_cutoff = c("simulated", "chisq"), k = deprecated(), kmax = deprecated()) {
+  ncomp <- renamed_arg(k, ncomp, "cellpca", "k", "ncomp")
+  ncomp_max <- renamed_arg(kmax, ncomp_max, "cellpca", "kmax", "ncomp_max")
   if (missing(x)) {
     stop("Missing 'x' argument.")
   }
@@ -727,19 +775,19 @@ cellpca <- function(x, k = NULL, alpha = 0.5, kmax = 10, var_explained = 0.8, sc
   check_count(maxiter, "maxiter")
   check_number(tol, "tol", lower = 0, lower_open = TRUE)
   check_number(max_col_frac, "max_col_frac", lower = 0, upper = 1)
-  init <- macropca(x, k = k, alpha = alpha, kmax = kmax, var_explained = var_explained,
+  init <- macropca(x, ncomp = ncomp, alpha = alpha, ncomp_max = ncomp_max, var_explained = var_explained,
                    scale = scale, ndir = ndir)
   sc <- init$scale
   y <- sweep(x, 2, sc, "/")
   fit <- cellpca_fit(y, init, maxiter, tol, max_col_frac)
-  k <- fit$k
+  ncomp <- fit$ncomp
   n <- nrow(x)
   p <- ncol(x)
-  comp <- paste0("PC", seq_len(k))
+  comp <- paste0("PC", seq_len(ncomp))
   observed <- !is.na(y)
 
   res <- list(loadings = fit$loadings, eigenvalues = fit$eigenvalues, center = fit$center,
-              scale = sc, k = as.integer(k), h = init$h, alpha = alpha,
+              scale = sc, ncomp = as.integer(ncomp), h = init$h, alpha = alpha,
               cutoff = sqrt(stats::qchisq(0.99, 1)), scores = fit$scores)
   dimnames(res$loadings) <- list(colnames(x), comp)
   dimnames(res$scores) <- list(rownames(x), comp)
@@ -758,7 +806,7 @@ cellpca <- function(x, k = NULL, alpha = 0.5, kmax = 10, var_explained = 0.8, sc
     dimnames(res$fitted) <- dimnames(res$imputed) <- dimnames(x)
   res[c("sigma1", "sigma2", "resid_scale", "par2", "objective", "iterations", "converged")] <-
     fit[c("sigma1", "sigma2", "resid_scale", "par2", "objective", "iterations", "converged")]
-  res$cutoff_sd <- sqrt(stats::qchisq(0.99, k))
+  res$cutoff_sd <- sqrt(stats::qchisq(0.99, ncomp))
   res$cutoff_od <- if (od_cutoff == "chisq") {
     sqrt(stats::qchisq(0.99, p))
   } else {
@@ -773,7 +821,7 @@ cellpca <- function(x, k = NULL, alpha = 0.5, kmax = 10, var_explained = 0.8, sc
 cellpca_fit <- function(y, init, maxiter, tol, max_col_frac, b1 = 1.5) {
   n <- nrow(y)
   p <- ncol(y)
-  k <- init$k
+  k <- init$ncomp
   observed <- !is.na(y)
   y0 <- y
   y0[!observed] <- 0
@@ -826,7 +874,7 @@ cellpca_fit <- function(y, init, maxiter, tol, max_col_frac, b1 = 1.5) {
   resid_scale <- scale_tanh_cols_cpp(resid)
   std_resid <- sweep(resid, 2, resid_scale, "/")
   deviation <- total_deviation(resid, resid_scale, b1) / sigma2
-  list(k = k, loadings = loadings, eigenvalues = e$values, center = center, scores = scores,
+  list(ncomp = k, loadings = loadings, eigenvalues = e$values, center = center, scores = scores,
        fitted = fitted, imputed = imputed, std_resid = std_resid, deviation = deviation,
        cell_weights = fit$cell_weights, case_weights = fit$case_weights, sigma1 = sigma1,
        sigma2 = sigma2, resid_scale = resid_scale, par2 = par2, objective = fit$objective,
@@ -853,7 +901,7 @@ cellpca_od_cutoff <- function(fit, init, n, maxiter, tol, max_col_frac) {
       rep(fit$resid_scale, each = n_clean)
     clean <- (fit$scores %*% t(fit$loadings))[index, , drop = FALSE] + noise
     colnames(clean) <- rownames(fit$loadings) %||% paste0("V", seq_len(ncol(clean)))
-    init_clean <- suppressWarnings(macropca(clean, k = fit$k, alpha = init$alpha))
+    init_clean <- suppressWarnings(macropca(clean, ncomp = fit$ncomp, alpha = init$alpha))
     fit_clean <- suppressWarnings(cellpca_fit(clean, init_clean, maxiter, tol, max_col_frac))
     unname(stats::quantile(sqrt(rowSums(fit_clean$std_resid^2, na.rm = TRUE)), 0.99))
   })
@@ -942,12 +990,14 @@ h_alpha_n <- function(alpha, n, p) {
 
 # Classical PCA (truncPC of cellWise): center, the loadings and eigenvalues
 # of the `ncomp` (default all) first components with a non-zero singular
-# value, the largest element of each loading vector positive.
+# value, the largest element of each loading vector positive. Singular values
+# below 1e-10 times the largest are zero (below 1e-10 in cellWise), so that
+# the rank does not depend on the units of the data.
 trunc_pc <- function(y, ncomp = NULL) {
   y <- as.matrix(y)
   center <- colMeans(y)
   s <- svd(sweep(y, 2, center), nu = 0, nv = min(ncomp %||% min(dim(y)), dim(y)))
-  rank <- sum(s$d[seq_len(ncol(s$v))] > 1e-10)
+  rank <- sum(s$d[seq_len(ncol(s$v))] > 1e-10 * s$d[1])
   v <- s$v[, seq_len(rank), drop = FALSE]
   v <- sweep(v, 2, apply(v, 2, function(a) if (a[which.max(abs(a))] < 0) -1 else 1), "*")
   list(rank = rank, eigenvalues = s$d[seq_len(rank)]^2 / (nrow(y) - 1), loadings = v,
@@ -976,20 +1026,23 @@ od_cutoff_unimcd <- function(od, alpha) {
 # Outlyingness of each row: the largest standardized distance (with the
 # reweighted univariate MCD) over directions through pairs of rows, chosen
 # by the deterministic generator of cellWise (all pairs when there are at
-# most `ndir`).
+# most `ndir`). Directions through identical rows, and those with a zero
+# scale, are skipped: norms and scales below 1e-12 times the largest norm of
+# the rows (below 1e-12 in cellWise).
 pp_outlyingness <- function(y, ndir, alpha) {
   n <- nrow(y)
   all_pairs <- choose(n, 2)
   ndir <- if (identical(ndir, "all")) all_pairs else min(ndir, all_pairs)
   pairs <- if (ndir == all_pairs) t(utils::combn(n, 2)) else direction_pairs(n, ndir)
+  tiny <- 1e-12 * max(sqrt(rowSums(y^2)))
   B <- y[pairs[, 1], , drop = FALSE] - y[pairs[, 2], , drop = FALSE]
   norms <- sqrt(rowSums(B^2))
-  B <- B[norms > 1e-12, , drop = FALSE] / norms[norms > 1e-12]
+  B <- B[norms > tiny, , drop = FALSE] / norms[norms > tiny]
   proj <- y %*% t(B)
   out <- numeric(n)
   for (j in seq_len(ncol(proj))) {
     u <- unimcd_cpp(proj[, j], alpha)
-    if (u[["scale"]] > 1e-12) out <- pmax(out, abs(proj[, j] - u[["location"]]) / u[["scale"]])
+    if (u[["scale"]] > tiny) out <- pmax(out, abs(proj[, j] - u[["location"]]) / u[["scale"]])
   }
   out
 }
@@ -1014,19 +1067,27 @@ direction_pairs <- function(n, ndir) {
 }
 
 # Center and scatter of the scores within the subspace: the deterministic
-# MCD when its criterion is below that of the C-steps (as in cellWise),
-# otherwise the reweighted covariance of the C-steps.
-final_mcd <- function(scores, alpha, obj, mah, k) {
+# MCD, or the reweighted covariance of the C-steps when it fails. cellWise
+# keeps the MCD when its criterion (the log-determinant) is below the
+# determinant of the C-steps, a comparison that depends on the units of the
+# data. As log(d) < d, it keeps it whenever its determinant is below e times
+# that of the C-steps (a larger factor for determinants far from 1), which is
+# the usual case. covMcd() takes a determinant below exp(-50 k) as singular:
+# the scores are divided by a power of 2 close to their median absolute value
+# (exactly, without rounding), and the estimates are scaled back.
+final_mcd <- function(scores, alpha, mah, k) {
+  s <- 2^round(log2(stats::median(abs(scores))))
+  if (!is.finite(s) || s <= 0) s <- 1
   if (k > 1) {
-    mcd <- tryCatch(robustbase::covMcd(scores, nsamp = "deterministic", alpha = alpha),
+    mcd <- tryCatch(robustbase::covMcd(scores / s, nsamp = "deterministic", alpha = alpha),
                     error = function(e) NULL)
   } else {
     # the deterministic MCD does not handle one variable: the exact
     # univariate MCD
-    mcd <- robustbase::covMcd(scores, alpha = alpha)
+    mcd <- robustbase::covMcd(scores / s, alpha = alpha)
   }
-  if (!is.null(mcd) && mcd$crit < obj + 1e-16) {
-    return(list(center = unname(mcd$center), cov = unname(as.matrix(mcd$cov))))
+  if (!is.null(mcd)) {
+    return(list(center = unname(mcd$center) * s, cov = unname(as.matrix(mcd$cov)) * s^2))
   }
   mah <- mah / (stats::median(mah) / stats::qchisq(0.5, k))
   w <- stats::cov.wt(scores, wt = as.numeric(mah <= stats::qchisq(0.975, k)), method = "ML")
@@ -1039,7 +1100,7 @@ loc_scale_1step <- function(x) {
     v <- v[is.finite(v)]
     m0 <- stats::median(v)
     s0 <- stats::mad(v, center = m0)
-    if (s0 <= 1e-12) return(m0)
+    if (s0 <= 0) return(m0)
     u <- 1 - ((v - m0) / s0 * 1.482602218505602 / 3)^2
     w <- ((u + abs(u)) / 2)^2
     sum(v * w) / sum(w)
@@ -1062,9 +1123,9 @@ macropca_distances <- function(fit, y, y_obs) {
   resid <- y_obs - fitted
   resid_scale <- fit$resid_scale
   if (is.null(resid_scale)) {
-    resid_scale <- if (fit$k < fit$rank) scale_1step_cols_cpp(resid) else rep(0, ncol(y))
+    resid_scale <- if (fit$ncomp < fit$rank) scale_1step_cols_cpp(resid) else rep(0, ncol(y))
   }
-  std_resid <- if (fit$k < fit$rank) sweep(resid, 2, resid_scale, "/") else resid * 0
+  std_resid <- if (fit$ncomp < fit$rank) sweep(resid, 2, resid_scale, "/") else resid * 0
   std_resid[!is.finite(std_resid) & !is.na(y_obs)] <- 0
   flagged <- !is.na(std_resid) & abs(std_resid) > fit$cutoff
   dimnames(std_resid) <- dimnames(flagged) <- dimnames(y_obs)
@@ -1179,7 +1240,7 @@ print.specproc_robpca <- function(x, ...) {
   cat(label, "\n\n", sep = "")
   cat("Observations:   ", length(x$sd), " (h = ", x$h, ")\n", sep = "")
   cat("Variables:      ", attr(x, "nvar"), "\n", sep = "")
-  cat("Components:     ", x$k, "\n", sep = "")
+  cat("Components:     ", x$ncomp, "\n", sep = "")
   cat("Eigenvalues:    ", paste(format(x$eigenvalues, digits = 4), collapse = " "), "\n", sep = "")
   if (inherits(x, "specproc_rospca")) {
     cat("Non-zero loadings per component: ", paste(colSums(x$loadings != 0), collapse = " "), "\n", sep = "")
@@ -1212,29 +1273,27 @@ robust_pca_input <- function(x) {
   x
 }
 
-check_robust_args <- function(k, kmax, alpha, var_explained) {
-  if (!is.null(k)) check_count(k, "k")
-  check_count(kmax, "kmax")
+check_robust_args <- function(ncomp, ncomp_max, alpha, var_explained) {
+  if (!is.null(ncomp)) check_count(ncomp, "ncomp")
+  check_count(ncomp_max, "ncomp_max")
   check_number(alpha, "alpha", lower = 0.5, upper = 1)
   check_number(var_explained, "var_explained", lower = 0, upper = 1, lower_open = TRUE)
   invisible(TRUE)
 }
 
-robust_h <- function(n, alpha, kmax) {
-  min(n, max(floor(alpha * n), floor((n + kmax + 1) / 2)))
+robust_h <- function(n, alpha, ncomp_max) {
+  min(n, max(floor(alpha * n), floor((n + ncomp_max + 1) / 2)))
 }
 
-# Reduces centered data to the affine subspace spanned by the observations.
+# Reduces centered data to the affine subspace spanned by the observations,
+# from the eigen-decomposition of the smaller cross-product matrix (C++).
 svd_reduce <- function(x) {
-  center <- colMeans(x)
-  xc <- sweep(x, 2, center)
-  s <- svd(xc, nu = 0)
-  rank <- sum(s$d > max(dim(x)) * s$d[1] * .Machine$double.eps)
-  if (rank < 1) {
+  if (!any(apply(x, 2, function(v) any(v != v[1])))) {
     stop("The data have no variation.", call. = FALSE)
   }
-  v <- s$v[, seq_len(rank), drop = FALSE]
-  list(center = center, v = v, z = xc %*% v)
+  red <- svd_reduce_cpp(x, 10 * max(dim(x)) * .Machine$double.eps)
+  names(red$center) <- colnames(x)
+  red
 }
 
 # Stahel-Donoho outlyingness of each observation.
@@ -1257,23 +1316,28 @@ least_outlying <- function(z, h, ndir) {
   sort(order(outlyingness(z, h, ndir))[seq_len(h)])
 }
 
-choose_k <- function(values, kmax, var_explained) {
+choose_ncomp <- function(values, ncomp_max, var_explained) {
   values <- pmax(values, 0)
   cum <- cumsum(values) / sum(values)
-  k <- which(cum >= var_explained - 1e-12)[1]
-  max(1L, min(k, kmax))
+  ncomp <- which(cum >= var_explained - 1e-12)[1]
+  max(1L, min(ncomp, ncomp_max))
 }
 
 # Distance of each (centered) row to the span of the columns of `loadings`.
+# Distances at the rounding level, relative to the norm of the row, are set
+# to zero: rows in the span (all rows when it is the whole space) have none.
 orthogonal_distance <- function(xc, loadings) {
   fitted <- xc %*% loadings %*% solve(crossprod(loadings), t(loadings))
-  sqrt(pmax(rowSums((xc - fitted)^2), 0))
+  od <- sqrt(pmax(rowSums((xc - fitted)^2), 0))
+  od[which(od <= sqrt(.Machine$double.eps) * sqrt(rowSums(xc^2)))] <- 0
+  od
 }
 
 # Cut-off for orthogonal distances: Wilson-Hilferty approximation with the
-# univariate MCD of OD^(2/3), at the given level.
+# univariate MCD of OD^(2/3), at the given level. It is zero when all the
+# distances are, so that no observation is an orthogonal outlier.
 od_cutoff <- function(od, h, level = 0.975) {
-  if (max(od) <= sqrt(.Machine$double.eps) * max(1, max(od))) {
+  if (all(od == 0)) {
     return(0)
   }
   u <- univariate_mcd_cpp(od^(2 / 3), min(h, length(od)))
@@ -1301,13 +1365,15 @@ outlier_type <- function(sd, od, cutoff_sd, cutoff_od) {
 finish_robust_pca <- function(res, x, class) {
   xs <- sweep(sweep(x, 2, res$center), 2, res$scale, "/")
   scores <- xs %*% res$loadings
-  comp <- paste0("PC", seq_len(res$k))
+  comp <- paste0("PC", seq_len(res$ncomp))
   colnames(res$loadings) <- colnames(scores) <- comp
   rownames(res$loadings) <- colnames(x)
   res$scores <- scores
   res$sd <- sqrt(rowSums(sweep(scores^2, 2, res$eigenvalues, "/")))
+  # zero when the subspace contains the data (ncomp equal to the rank), and then
+  # so is the cut-off: no orthogonal outliers
   res$od <- orthogonal_distance(xs, res$loadings)
-  res$cutoff_sd <- sqrt(stats::qchisq(0.975, res$k))
+  res$cutoff_sd <- sqrt(stats::qchisq(0.975, res$ncomp))
   res$cutoff_od <- od_cutoff(res$od, res$h)
   res$outlier_type <- outlier_type(res$sd, res$od, res$cutoff_sd, res$cutoff_od)
   structure(res, variables = colnames(x), nvar = ncol(x), class = class)

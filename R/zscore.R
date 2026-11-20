@@ -30,15 +30,34 @@
 #'
 #' @param x A numeric vector.
 #' @param robust A logical value indicating whether to calculate classical or robust z-score. If `FALSE` (the default), uses the classical approach. If `TRUE`, computes the robust method, i.e. the so-called Stahel-Donoho outlyingness.
-#' @param drop.na A logical value indicating whether to remove missing values (\code{NA}) from the calculations. If \code{TRUE}, missing values will be removed. If \code{FALSE} (the default), missing values are kept in the output (with a missing score) and ignored when computing the location and scale.
+#' @param drop_na A logical value indicating whether to remove missing values (\code{NA}) from the calculations. If \code{TRUE}, missing values will be removed. If \code{FALSE} (the default), missing values are kept in the output (with a missing score) and ignored when computing the location and scale.
 #' @param cutoff A numeric value indicating the threshold above which data points are identified and flagged as potential outliers. By default, `cutoff = 3`.
+#' @param drop.na `r lifecycle::badge("deprecated")` Use `drop_na`.
 #'
-#' @return A tibble with two columns:
+#' @return A tibble with three columns, sorted by decreasing score:
 #'   - `data`: The original numeric values.
 #'   - `score`: The calculated z-scores.
 #'   - `flag`: `TRUE` if the corresponding data point is flagged as a potential outlier, and `FALSE` otherwise.
 #'
+#' @seealso [iqr_outliers()], [directional_outlyingness()] for skewed data.
+#'
 #' @examples
+#' # 90 regular values and a cluster of 10 outliers near 62
+#' set.seed(1)
+#' x <- c(rnorm(90, mean = 50, sd = 2), rnorm(10, mean = 62, sd = 0.5))
+#' group <- rep(c("regular", "outlier"), c(90, 10))
+#' ggplot2::ggplot(data.frame(x, group), ggplot2::aes(x)) +
+#'   ggplot2::geom_density(fill = "#2166ac", alpha = 0.3) +
+#'   ggplot2::geom_rug(ggplot2::aes(colour = group)) +
+#'   ggplot2::scale_colour_manual(values = c(outlier = "#b2182b", regular = "#2166ac"))
+#'
+#' # classical: the cluster inflates the standard deviation, which hides it
+#' # (masking): the outliers score below 3 and none is flagged
+#' head(zscore(x), 11)
+#' # robust: the median and the MAD hardly move, and the 10 outliers are
+#' # flagged
+#' head(zscore(x, robust = TRUE), 11)
+#'
 #' data(forageLIBS)
 #' # iron contents (mg/kg): a few samples are far above the others
 #' fe <- forageLIBS$Fe[!is.na(forageLIBS$Fe)]
@@ -47,20 +66,20 @@
 #'
 #' @export zscore
 #'
-zscore <- function(x, cutoff = 3, robust = FALSE, drop.na = FALSE) {
+zscore <- function(x, cutoff = 3, robust = FALSE, drop_na = FALSE,
+                   drop.na = deprecated()) {
+  drop_na <- renamed_arg(drop.na, drop_na, "zscore", "drop.na", "drop_na")
   if (missing(x)) {
     stop("Missing 'x' argument.")
   }
-  if (!is.numeric(x)) {
-    stop("The input 'x' must be a numeric vector.")
-  }
+  check_numeric_vector(x, "zscore")
   if (!is.logical(robust)) {
     stop("The input 'robust' must be a logical value (TRUE or FALSE).")
   }
   check_number(cutoff, "cutoff", lower = 0, lower_open = TRUE)
-  check_flag(drop.na, "drop.na")
+  check_flag(drop_na, "drop_na")
 
-  if (drop.na) {
+  if (drop_na) {
     x <- x[!is.na(x)]
   }
 

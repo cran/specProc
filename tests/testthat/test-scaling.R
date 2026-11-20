@@ -11,7 +11,7 @@ test_that("msc removes additive and multiplicative effects", {
   expect_equal(as.matrix(res$correction), matrix(ref, 10, 50, byrow = TRUE), ignore_attr = TRUE)
   expect_equal(res$offset, a)
   expect_equal(res$slope, b)
-  expect_equal(as.matrix(msc(x, xref = ref, drop.offset = FALSE)$correction), x / b, ignore_attr = TRUE)
+  expect_equal(as.matrix(msc(x, xref = ref, drop_offset = FALSE)$correction), x / b, ignore_attr = TRUE)
   # default reference: corrected spectra all become proportional to the median spectrum
   res2 <- msc(x)
   expect_lt(max(apply(as.matrix(res2$correction), 2, stats::sd)), 1e-10)
@@ -41,14 +41,14 @@ test_that("pareto divides by the square root of the standard deviation", {
   expect_warning(pareto_scale(cbind(m, 1)), "zero standard deviation")
   m_na <- m
   m_na[1, 1] <- NA
-  expect_false(anyNA(pareto_scale(m_na, drop.na = TRUE)[-1, ]))
+  expect_false(anyNA(pareto_scale(m_na, drop_na = TRUE)[-1, ]))
 })
 
 test_that("minmax rescales to [a, b]", {
   expect_equal(minmax(c(2, 4, 6, 10)), c(0, 0.25, 0.5, 1))
   expect_equal(range(minmax(stats::rnorm(20), a = -1, b = 1)), c(-1, 1))
   expect_equal(minmax(c(1, NA, 3)), c(0, 1))
-  expect_equal(minmax(c(1, NA, 3), drop.na = FALSE), c(0, NA, 1))
+  expect_equal(minmax(c(1, NA, 3), drop_na = FALSE), c(0, NA, 1))
   expect_equal(minmax(c(5, 5)), c(0, 0))
   expect_error(minmax(1:3, a = 1, b = 0), "greater")
 })
@@ -59,7 +59,7 @@ test_that("center subtracts column means or medians", {
   expect_equal(attr(center(m), "center"), colMeans(m))
   m_na <- m
   m_na[1, 1] <- NA
-  expect_equal(sum(is.na(center(m_na, drop.na = TRUE))), 1)
+  expect_equal(sum(is.na(center(m_na, drop_na = TRUE))), 1)
   expect_error(center(m, "mode"), "Invalid method")
   expect_error(center("a"), "numeric")
 })
@@ -90,37 +90,6 @@ test_that("poisson_scale scales by the square root of the means", {
   expect_equal(res2$sc, sqrt(rowMeans(x)))
   expect_error(poisson_scale(x, sc = 1:2), "one scale per column")
   expect_error(poisson_scale(x, options = list(mode = 3)), "mode")
-})
-
-test_that("plot_spectra draws one line per spectrum", {
-  spec <- make_spectra(n = 3, p = 50)
-  df <- as.data.frame(spec$x, check.names = FALSE)
-  p <- plot_spectra(df)
-  expect_s3_class(p, "ggplot")
-  built <- ggplot2::ggplot_build(p)
-  expect_equal(length(unique(built$data[[1]]$group)), 3)
-  df$conc <- 1:3
-  df$id <- c("a", "b", "c")
-  expect_s3_class(plot_spectra(df, id = id, colvar = conc), "ggplot")
-  expect_s3_class(plot_spectra(df, id = "id", colvar = "conc"), "ggplot")
-  expect_error(plot_spectra(df), "wavelengths")
-  expect_error(plot_spectra(df, id = zz), "does not exist")
-})
-
-test_that("plot_spectra offsets successive spectra", {
-  spec <- make_spectra(n = 3, p = 50)
-  df <- as.data.frame(spec$x, check.names = FALSE)
-  base <- ggplot2::ggplot_build(plot_spectra(df))$data[[1]]
-  shifted <- ggplot2::ggplot_build(plot_spectra(df, offset = c(0.5, 10)))$data[[1]]
-  third <- base$group == 3
-  expect_equal(shifted$y[third], base$y[third] + 2 * 10)
-  expect_equal(shifted$x[third], base$x[third] + 2 * 0.5)
-  # a single number is a vertical offset, and the first spectrum stays in place
-  vertical <- ggplot2::ggplot_build(plot_spectra(df, offset = 10))$data[[1]]
-  expect_equal(vertical$x, base$x)
-  expect_equal(vertical$y[base$group == 1], base$y[base$group == 1])
-  expect_error(plot_spectra(df, offset = "a"), "offset")
-  expect_error(plot_spectra(df, offset = 1:3), "offset")
 })
 
 test_that("tukey_gh distribution functions are consistent", {

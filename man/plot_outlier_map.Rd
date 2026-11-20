@@ -2,7 +2,7 @@
 % Please edit documentation in R/plot_robust_pca.R
 \name{plot_outlier_map}
 \alias{plot_outlier_map}
-\title{Outlier Map of a Robust PCA}
+\title{Outlier Map of a Robust PCA or Robust PLS Model}
 \usage{
 plot_outlier_map(
   object,
@@ -11,17 +11,25 @@ plot_outlier_map(
   relative = FALSE,
   shade = FALSE,
   log = FALSE,
-  colour_by = c("type", "distance"),
   title = NULL,
-  ...
+  map = c("regression", "score"),
+  ...,
+  color_by = c("type", "distance"),
+  xlab = NULL,
+  ylab = NULL,
+  base_size = 11,
+  point_size = 2.2,
+  point_alpha = 0.85,
+  colour_by = deprecated()
 )
 }
 \arguments{
 \item{object}{An object returned by \code{\link[=robpca]{robpca()}}, \code{\link[=rospca]{rospca()}},
-\code{\link[=macropca]{macropca()}} or \code{\link[=cellpca]{cellpca()}}.}
+\code{\link[=macropca]{macropca()}}, \code{\link[=cellpca]{cellpca()}}, \code{\link[=rsimpls]{rsimpls()}} or \code{\link[=rpcr]{rpcr()}}.}
 
 \item{newdata}{Optional new observations to add to the map (a numeric
-matrix or data frame with the calibration variables).}
+matrix or data frame with the calibration variables). Not available for
+the regression outlier map of \code{\link[=rsimpls]{rsimpls()}} and \code{\link[=rpcr]{rpcr()}} fits.}
 
 \item{labels}{The number of most outlying observations to label (by
 their row names, or row numbers). Default is 3; use 0 for no labels.}
@@ -38,7 +46,17 @@ observations stays white. Default is \code{FALSE}.}
 observations when a few are far away. Zero distances are drawn at the
 smallest positive distance. Default is \code{FALSE}.}
 
-\item{colour_by}{The colors of the points: \code{"type"} (default), by
+\item{title}{The plot title.}
+
+\item{map}{For \code{\link[=rsimpls]{rsimpls()}} and \code{\link[=rpcr]{rpcr()}} fits, the map to draw:
+\code{"regression"} (default), the regression outlier map, or \code{"score"},
+the score outlier map of the predictors. Not used for robust PCA fits.}
+
+\item{...}{Further arguments passed to \code{\link[ggplot2:geom_point]{ggplot2::geom_point()}} to style
+the points, such as \code{stroke} (default 0.4) or \code{colour} (the outline,
+\code{"black"}).}
+
+\item{color_by}{The colors of the points: \code{"type"} (default), by
 outlier type, or \code{"distance"}, by their reduced distance from the
 origin, \eqn{\max(SD/c_{SD}, OD/c_{OD})}, on a rainbow scale from dark
 red (the closest) to blue (the farthest). With \code{relative = TRUE}, where
@@ -46,14 +64,19 @@ both cut-offs are at 1, yellow marks the cut-offs: dark red through
 orange for the regular observations, then green and blue for the
 outlying ones. Otherwise, the colors spread evenly over the distances.}
 
-\item{title}{The plot title.}
+\item{xlab, ylab}{The axis titles. Default are the names of the distances.}
 
-\item{...}{Further arguments passed to \code{\link[ggplot2:geom_point]{ggplot2::geom_point()}} to style
-the points, such as \code{alpha} (default 0.85), \code{size} (2.2), \code{stroke}
-(0.4) or \code{colour} (the outline, \code{"black"}). \code{size} can also be a numeric
+\item{base_size}{The size of the text, in points. Default is 11.}
+
+\item{point_size}{The size of the points (default 2.2), or a numeric
 vector with one value per sample (the calibration samples, then those
 of \code{newdata}), such as the concentration of an element, to vary the
 size of the points, with a legend.}
+
+\item{point_alpha}{The opacity of the points, between 0 and 1 (default
+0.85).}
+
+\item{colour_by}{\ifelse{html}{\href{https://lifecycle.r-lib.org/articles/stages.html#deprecated}{\figure{lifecycle-deprecated.svg}{options: alt='[Deprecated]'}}}{\strong{[Deprecated]}} Use \code{color_by}.}
 }
 \value{
 A ggplot object.
@@ -64,7 +87,13 @@ distance, for a robust PCA fitted by \code{\link[=robpca]{robpca()}}, \code{\lin
 \code{\link[=macropca]{macropca()}} or \code{\link[=cellpca]{cellpca()}} (Hubert, Rousseeuw and Vanden Branden, 2005).
 For \code{\link[=cellpca]{cellpca()}}, the vertical axis is the norm of the standardized
 residuals, as in the enhanced outlier map of Centofanti, Hubert and
-Rousseeuw.
+Rousseeuw. For a robust calibration model fitted by \code{\link[=rsimpls]{rsimpls()}} or
+\code{\link[=rpcr]{rpcr()}}, it is by default
+the regression outlier map of Hubert and Vanden Branden (2003): the
+residual distance (with one response, the absolute standardized residual)
+against the score distance. With \code{map = "score"}, it is the score outlier
+map of the predictors: the orthogonal distance of each spectrum to the
+model against its score distance, as for a robust PCA.
 }
 \details{
 The dashed lines are the cut-offs of the two distances. They divide the
@@ -79,9 +108,18 @@ projected, but far from the PCA subspace;
 harmful outliers.
 }
 
+In the regression outlier map of \code{\link[=rsimpls]{rsimpls()}} or \code{\link[=rpcr]{rpcr()}}, the top left
+region holds
+the \strong{vertical outliers}: observations with a typical spectrum but a
+large residual, such as a wrong reference value. Bad leverage points have
+both an outlying spectrum and a large residual; good leverage points have
+an outlying spectrum that the model still fits.
+
 New observations (\code{newdata}) are projected onto the model with
-\link[=predict.specproc_robpca]{predict()} and shown with the calibration
-cut-offs, which is how new spectra are screened before prediction.
+\link[=predict.specproc_robpca]{predict()} (or
+\link[=predict.specproc_rsimpls]{predict()} for the score outlier map of an
+\code{\link[=rsimpls]{rsimpls()}} or \code{\link[=rpcr]{rpcr()}} fit) and shown with the calibration cut-offs,
+which is how new spectra are screened before prediction.
 
 With \code{relative = TRUE}, each distance is divided by its cut-off (the
 reduced score and orthogonal distances), so both cut-offs are at 1
@@ -102,11 +140,12 @@ fit <- forageLIBS |>
 
 plot_outlier_map(fit, relative = TRUE, shade = TRUE, log = TRUE)
 plot_outlier_map(fit, relative = TRUE, shade = TRUE, log = TRUE,
-labels = 10, colour_by = "distance")
+labels = 10, color_by = "distance", point_alpha = 0.6)
 
 }
 \seealso{
-\code{\link[=robpca]{robpca()}}, \code{\link[=rospca]{rospca()}}, \code{\link[=macropca]{macropca()}}, \code{\link[=plot_cell_map]{plot_cell_map()}}
+\code{\link[=robpca]{robpca()}}, \code{\link[=rospca]{rospca()}}, \code{\link[=macropca]{macropca()}}, \code{\link[=rsimpls]{rsimpls()}}, \code{\link[=rpcr]{rpcr()}},
+\code{\link[=plot_cell_map]{plot_cell_map()}}
 }
 \author{
 Christian L. Goueguel

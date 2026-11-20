@@ -33,16 +33,75 @@ test_that("directional_outlyingness flags gross outliers", {
   expect_named(res, c("data", "score", "flag"))
   expect_true(res$flag[res$data == 1e3])
   expect_equal(sum(res$flag), 1)
-  expect_no_error(res2 <- directional_outlyingness(y, maxRatio = 3))
+  expect_no_error(res2 <- directional_outlyingness(y, max_ratio = 3))
   expect_true(res2$flag[res2$data == 1e3])
-  expect_error(directional_outlyingness(y, maxRatio = 1), "at least 2")
+  expect_error(directional_outlyingness(y, max_ratio = 1), "at least 2")
   expect_error(directional_outlyingness("a"), "numeric")
+})
+
+test_that("directional_outlyingness scales follow equation 2 of the paper", {
+  expect_equal(huber_rho(c(-3, -2.1, 0, 1.05, 4)), c(1, 1, 0, 0.25, 1))
+  f <- function(x) huber_rho(x) * stats::dnorm(x)
+  alpha <- stats::integrate(f, 0, 2.1, rel.tol = 1e-12)$value +
+    stats::integrate(f, 2.1, Inf, rel.tol = 1e-12)$value
+  expect_equal(huber_rho_alpha(2.1), alpha, tolerance = 1e-9)
+  # the scale of the upper half sample of an odd sample, which includes the
+  # median, written out from the paper
+  set.seed(3)
+  x <- stats::rnorm(51)
+  med <- stats::median(x)
+  above <- sort(x)[26:51] - med
+  s0 <- stats::median(above) / stats::qnorm(0.75)
+  sa <- s0 * sqrt(sum(pmin((above / s0 / 2.1)^2, 1)) / (2 * alpha * 26))
+  res <- directional_outlyingness(x)
+  expect_equal(res$score[res$data == max(x)], (max(x) - med) / sa)
+  # consistent at the normal distribution
+  set.seed(4)
+  expect_equal(scale_1step_m(abs(stats::rnorm(2e5)), 1e-10), 1, tolerance = 0.01)
+  expect_equal(scale_1step_m(numeric(0), 1e-10), 0)
+  expect_equal(scale_1step_m(rep(0, 5), 1e-10), 0)
+})
+
+test_that("directional_outlyingness flags about 1 - cutoff_quantile of normal data", {
+  set.seed(2)
+  z <- stats::rnorm(1e4)
+  res <- directional_outlyingness(z)
+  expect_equal(res$flag, res$score > stats::qnorm(0.9975))
+  expect_gt(mean(res$flag), 0.003)
+  expect_lt(mean(res$flag), 0.007)
+  res90 <- directional_outlyingness(z, cutoff_quantile = 0.9)
+  expect_equal(res90$flag, res90$score > stats::qnorm(0.95))
+  # close to the absolute robust z-score
+  rob <- zscore(z, robust = TRUE)
+  expect_equal(res$score, abs(rob$score[match(res$data, rob$data)]), tolerance = 0.05)
+  expect_error(directional_outlyingness(z, cutoff_quantile = 1), "cutoff_quantile")
+  expect_error(directional_outlyingness(z, cutoff_quantile = 0), "cutoff_quantile")
+})
+
+test_that("skewness-aware methods flag low and high outliers of skewed data", {
+  set.seed(1)
+  out <- c(85, 87, 89, 220, 230, 240)
+  x <- c(100 + stats::rgamma(200, shape = 2, scale = 10), out)
+  # symmetric methods: regular values of the long tail, not the low outliers
+  iqr <- iqr_outliers(x)
+  rob <- zscore(x, robust = TRUE)
+  expect_false(any(out[1:3] %in% iqr$data[iqr$flag]))
+  expect_false(any(out[1:3] %in% rob$data[rob$flag]))
+  expect_true(any(!(iqr$data[iqr$flag] %in% out)))
+  expect_true(any(!(rob$data[rob$flag] %in% out)))
+  # skewness-aware methods: the outliers only
+  adj <- iqr_outliers(x, skew = TRUE)
+  dir <- directional_outlyingness(x)
+  expect_setequal(adj$data[adj$flag], out)
+  expect_setequal(dir$data[dir$flag], out)
+  # the low outliers score above the largest regular value
+  expect_gt(min(dir$score[dir$data %in% out[1:3]]), max(dir$score[!(dir$data %in% out)]))
 })
 
 test_that("generalized_boxplot estimates g and h and sensible fences", {
   set.seed(3)
   df <- data.frame(normal = stats::rnorm(5000), skewed = stats::rexp(5000))
-  res <- generalized_boxplot(df, plot = FALSE)
+  res <- generalized_boxplot(df, alpha = 0.05, plot = FALSE)
   st <- res$stats
   expect_lt(abs(st$g[1]), 0.05)
   expect_lt(st$h[1], 0.1)
@@ -75,11 +134,108 @@ test_that("plot_outliers returns plots and data without touching the RNG", {
   p <- plot_outliers(m)
   expect_identical(.Random.seed, before)
   expect_s3_class(p, "ggplot")
-  expect_s3_class(plot_outliers(m, show.outlier = FALSE, show.mahal = TRUE), "ggplot")
-  expect_s3_class(plot_outliers(m, show.mahal = TRUE), "ggplot")
-  res <- plot_outliers(m, show.outlier = FALSE)
-  expect_named(res, c(paste0("v", 1:4), "outlier", "mahalanobis"))
+  expect_s3_class(plot_outliers(m, color_by = "distance"), "ggplot")
+  expect_s3_class(plot_outliers(m, color_by = "both"), "ggplot")
+  expect_s3_class(plot_outliers(m, type = "distance", label_outliers = TRUE), "ggplot")
+  res <- plot_outliers(m, plot = FALSE)
+  expect_named(res, c("row", "mahalanobis", "cutoff", "outlier", "weight", paste0("v", 1:4)))
   expect_true(res$outlier[1])
   expect_error(plot_outliers(m[, 1, drop = FALSE]), "two-dimensional")
   expect_error(plot_outliers(m, quan = 0.2), "quan")
+  expect_error(plot_outliers(m, color_by = "red"), "should be one of")
+  # the former show.outlier and show.mahal still work, with a warning
+  lifecycle::expect_deprecated(plot_outliers(m, show.mahal = TRUE))
+  rlang::local_options(lifecycle_verbosity = "quiet")
+  expect_named(plot_outliers(m, show.outlier = FALSE), names(res))
+  expect_s3_class(plot_outliers(m, show.outlier = FALSE, show.mahal = TRUE), "ggplot")
+  expect_error(plot_outliers(m, show.outlier = "yes"), "show.outlier")
+})
+
+# arw() of the mvoutlier package (Filzmoser et al., 2005), as published.
+mvoutlier_arw <- function(x, m0, c0, alpha) {
+  n <- nrow(x)
+  p <- ncol(x)
+  pcrit <- if (p <= 10) (0.24 - 0.003 * p) / sqrt(n) else (0.252 - 0.0018 * p) / sqrt(n)
+  delta <- stats::qchisq(1 - alpha, p)
+  d2 <- stats::mahalanobis(x, m0, c0)
+  d2ord <- sort(d2)
+  dif <- stats::pchisq(d2ord, p) - (0.5:n) / n
+  i <- (d2ord >= delta) & (dif > 0)
+  alfan <- if (sum(i) == 0) 0 else max(dif[i])
+  if (alfan < pcrit) alfan <- 0
+  cn <- if (alfan > 0) max(d2ord[n - ceiling(n * alfan)], delta) else Inf
+  w <- d2 < cn
+  m <- apply(x[w, ], 2, mean)
+  c1 <- as.matrix(x - rep(1, n) %*% t(m))
+  list(m = m, c = (t(c1 * w) %*% c1) / sum(w), cn = cn, w = w)
+}
+
+test_that("plot_outliers flags the samples beyond the adaptive cutoff of Filzmoser et al.", {
+  data(forageLIBS, package = "specProc", envir = environment())
+  x <- as.matrix(forageLIBS[c("Ca", "Mg", "P", "K")])
+  rob <- with_seed(123, robustbase::covMcd(x, alpha = 0.5))
+  ref <- mvoutlier_arw(x, rob$center, rob$cov, alpha = 0.025)
+  d2 <- stats::mahalanobis(x, rob$center, rob$cov)
+  res <- plot_outliers(x, plot = FALSE)
+  expect_true(is.finite(ref$cn))
+  expect_equal(res$cutoff[1], sqrt(ref$cn))
+  expect_equal(res$mahalanobis, unname(sqrt(d2)))
+  expect_equal(res$outlier, unname(d2 > ref$cn)) # as aq.plot() of mvoutlier
+  expect_equal(res$weight, as.numeric(ref$w))
+  # robust z-scores from the reweighted location and scale
+  expect_equal(res$Ca, unname((x[, "Ca"] - ref$m["Ca"]) / sqrt(ref$c["Ca", "Ca"])))
+  # the fixed quantile flags more samples
+  q <- plot_outliers(x, cutoff = "quantile", plot = FALSE)
+  expect_equal(q$cutoff[1], sqrt(stats::qchisq(0.975, 4)))
+  expect_equal(q$outlier, unname(d2 > stats::qchisq(0.975, 4)))
+  expect_gt(sum(q$outlier), sum(res$outlier))
+})
+
+test_that("plot_outliers flags no sample of clean data with the adaptive cutoff", {
+  set.seed(19)
+  z <- data.frame(matrix(stats::rnorm(400 * 3), 400))
+  res <- plot_outliers(z, plot = FALSE)
+  expect_equal(sum(res$outlier), 0)
+  expect_true(all(is.infinite(res$cutoff)))
+  expect_gt(sum(plot_outliers(z, cutoff = "quantile", plot = FALSE)$outlier), 0)
+  p <- plot_outliers(z, type = "distance")
+  expect_match(p$labels$caption, "^No outliers among 400 samples")
+  expect_s3_class(ggplot2::ggplotGrob(p), "gtable")
+})
+
+test_that("plot_outliers names the samples and leaves out missing values", {
+  set.seed(20)
+  df <- data.frame(sample = paste0("s", 1:60), a = stats::rnorm(60), b = stats::rnorm(60),
+                   c = stats::rnorm(60))
+  df[5:8, c("a", "b", "c")] <- c(8, -8, 8)
+  df$b[10] <- NA
+  expect_message(res <- plot_outliers(df, id = sample, plot = FALSE), "1 row with missing values")
+  expect_equal(nrow(res), 59)
+  expect_false(10 %in% res$row)
+  expect_equal(res$id, df$sample[res$row])
+  expect_true(res$outlier[res$row == 5])
+  p <- suppressMessages(plot_outliers(df, id = sample, label_outliers = TRUE, title = "Outliers"))
+  # the labels are placed by ggrepel; the other samples have empty labels
+  labels <- Filter(function(l) inherits(l$geom, "GeomTextRepel"), p$layers)[[1]]$data
+  labels <- labels[labels$.label != "", ]
+  expect_true("s5" %in% labels$.label)
+  expect_true(all(abs(labels$score) > 2.5)) # only beyond the univariate limits
+  expect_equal(p$labels$title, "Outliers")
+  expect_equal(p$labels$y, "Robust z-score")
+  expect_match(p$labels$caption, "1\\s+row\\s+with\\s+missing\\s+values\\s+left\\s+out")
+  expect_error(plot_outliers(df, id = zz), "'id' column does not exist")
+  d <- suppressMessages(plot_outliers(df, id = sample, type = "distance", label_outliers = TRUE))
+  expect_equal(d$labels$y, "Robust distance")
+  shown <- Filter(function(l) inherits(l$geom, "GeomTextRepel"), d$layers)[[1]]$data$.label
+  expect_setequal(shown[shown != ""],
+                  res$id[res$outlier])
+})
+
+test_that("plot_outliers needs several outliers for an adaptive cutoff", {
+  set.seed(20)
+  z <- data.frame(a = stats::rnorm(60), b = stats::rnorm(60), c = stats::rnorm(60))
+  z[1, ] <- c(10, -10, 10)
+  # a single gross outlier: no adaptive cutoff, but beyond the quantile
+  expect_false(any(plot_outliers(z, plot = FALSE)$outlier))
+  expect_true(plot_outliers(z, cutoff = "quantile", plot = FALSE)$outlier[1])
 })

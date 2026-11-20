@@ -1,3 +1,717 @@
+# specProc 0.9.0
+
+## New features
+
+* `robust_gandh()`: a Tukey g-and-h transformation fitted by robust quantile
+  least squares (rQLS), with separate skewness and tail parameters, adaptive
+  or explicit trimming cutoffs, and fit diagnostics. It has the fitted-object
+  interface of `robust_boxcox()` and `robust_yeojohnson()`, including new-data
+  prediction, inverse transformation and residual smearing. Direct inversion
+  preserves extreme normal scores without rounding cumulative probabilities.
+  `step_robust_gandh()` estimates the transformation within recipe training.
+  `robust = FALSE` gives the classical quantile least squares fit (QLS) of
+  all the observations, for comparison: the examples show, on synthetic
+  data, outliers that inflate the classical `g` and `h` and are pulled in
+  among the other values, but are trimmed by the robust fit.
+
+* `wavelet_denoise()`: denoising of spectra by thresholding their
+  undecimated wavelet transform (MODWT), the translation-invariant denoising
+  of Coifman and Donoho (1995). Narrow lines keep their height and width,
+  unlike with a smoothing filter. The noise of each level is estimated
+  robustly in each spectrum, the threshold is SureShrink (default) or
+  universal, hard (default) or soft, and the segments of a
+  multi-spectrometer system are denoised separately.
+  `step_wavelet_denoise()` is its recipe step, with a tunable `level`. In
+  the single shots of `forageShots`, whose lines are 2 to 3 channels wide
+  and whose noise has the scale of the lines, the defaults lower the error
+  of the continuum by about 10% for 4% of the height of the weak lines,
+  while a Savitzky-Golay filter of 5 channels lowers the strong lines by
+  10%; the PLS calibrations of the averaged spectra of `forageLIBS` hardly
+  change.
+
+* `rsimpls()`: robust PLS regression by the RSIMPLS algorithm of Hubert and
+  Vanden Branden (2003), the SIMPLS algorithm computed from a ROBPCA
+  covariance matrix of the spectra and the responses, followed by a robust
+  regression on the scores. Outlying spectra and wrong reference values have
+  little influence on the model. One or several responses; the response is
+  block-scaled before ROBPCA so that wrong reference values are detected
+  whatever its units. The fit gives the score, residual and orthogonal
+  distances of each observation, and the robust R² of the model.
+  `predict()` gives the predictions or scores of new spectra, with their
+  score and orthogonal distances, and `plot_outlier_map()` draws the
+  regression outlier map (vertical outliers, good and bad leverage points)
+  or, with `map = "score"`, the score outlier map of the spectra.
+  `step_rsimpls()` is its recipe step, the robust counterpart of
+  `recipes::step_pls()`: it replaces the spectra by their robust PLS scores,
+  and optionally their score and orthogonal distances.
+* The `"rsimpls"` engine of `parsnip::pls()` fits `rsimpls()` models in
+  tidymodels, with one or several outcomes; the other arguments of
+  `rsimpls()` are engine arguments (`set_engine("rsimpls", ncomp_max = ,
+  alpha = )`). `multi_predict()` gives the predictions of the models with fewer
+  components from the same fit, so `tune::tune_grid()` fits one model per
+  resample for a grid of `num_comp`. `predict()` of an `rsimpls()` model
+  gains `ncomp`, for the models with 1 to `ncomp_max` components, which the fit
+  now keeps (`models`).
+* `rpcr()`: robust principal component regression (RPCR) of Hubert and
+  Verboven (2003), the robust PCA of the spectra (`robpca()`) followed by
+  the LTS regression of the response on the scores, or the MCD regression of
+  several responses. It has the outputs, `predict()` method and outlier maps
+  of `rsimpls()`.
+* `robust_rmsecv()`: the robust RMSECV of `rsimpls()` or `rpcr()` models
+  with 1 to `ncomp_max` components, which leaves the outliers out of the
+  cross-validated error, and the robust component selection (RCS) criterion
+  of Engelen and Hubert (2005), to choose the number of components. The
+  folds are fitted in parallel when a `future::plan()` is set.
+* The `"lts"` engine of `parsnip::linear_reg()` fits the reweighted LTS
+  regression (`lts_fit()`, from `robustbase::ltsReg()`); after
+  `step_robpca()` in a workflow, it gives robust PCR in tidymodels.
+* `rsimca()`: robust SIMCA classification of Vanden Branden and Hubert
+  (2005), a robust PCA model of each class and the assignment to the closest
+  class from the scaled score and orthogonal distances, for whole spectra.
+  `predict()` gives the classes, or the distances to the classes and
+  whether a spectrum is outlying for all of them, and `plot_coomans()` draws
+  the distances to two classes against each other (Coomans plot), with the
+  class and classification boundaries. `simca()` is a new
+  parsnip model of SIMCA classification, with `rsimca()` as its `"rsimca"`
+  engine, to fit and tune it in tidymodels: `num_comp`, and the rule of
+  classification, `gamma` and `squared`, with the new dials parameters
+  `simca_gamma()` and `simca_squared()`.
+* `robust_da()`: robust linear and quadratic discriminant analysis of Hubert
+  and Van Driessen (2004), from the MCD estimates of the classes, for a few
+  variables such as line intensities or robust principal component scores.
+  `predict()` gives the classes or posterior probabilities. It is the
+  `"mcd"` engine of `parsnip::discrim_linear()` and
+  `parsnip::discrim_quad()`.
+* `select_wavelengths()`: selection of the informative wavelengths for PLS
+  regression, by the variable importance in projection (VIP), the
+  selectivity ratio (SR), backward elimination on either, or forward
+  interval PLS (iPLS). With `robust = TRUE`, the selection is made from an
+  `rsimpls()` model, without the regression outliers. The candidate
+  intervals of iPLS are evaluated in parallel when a `future::plan()` is
+  set. `plot_wavelength_selection()` shows the selected regions on the mean
+  spectrum with the importance of each variable.
+* `plot_shots()`: views of the laser shots and of their rejection by
+  `reject_shots()`, to judge the rejection before averaging the shots: a map
+  of the samples by the shot number, colored by the robust z-scores in
+  classes up to the cutoff, the rejected shots outlined (`"heatmap"`, the
+  default; `acquisition` orders the samples as measured, `arrange =
+  "extreme"` puts the most extreme first, and `smooth` gives running medians
+  along the acquisition, which show the drift of the shots during a
+  session); the robust z-scores of the shots with the cutoff
+  (`"criteria"`); the shots of a sample with the rejected ones in color
+  (`"spectra"`); the intensity, shape and rejected share along the shot
+  number, which shows cleaning shots and the drift of the ablation
+  (`"order"`); and the rejected shots per sample with the RSD of the
+  samples before and after the rejection (`"samples"`). `plot = FALSE`
+  returns the table of each view.
+* `forageShots`: the single laser shots (8 per measurement, in firing order)
+  of 20 of the measurements of `forageLIBS`, in the windows 380-430 nm and
+  760-780 nm, to study the shot-to-shot variability.
+* `step_select_wavelengths()`: the selection as a recipe step, repeated on
+  every resample; `num_terms`, `num_intervals` (new dials parameter
+  `num_intervals()`) and `num_comp` can be tuned.
+* `gap_derivative()`: the gap-segment derivative of Norris and Williams
+  (1984), the first or second derivative computed from the means of
+  segments of `segment` channels separated by `gap` channels, so that the
+  smoothing and the distance of the difference are set separately (the
+  window of `savitzky_golay()` sets both). As in `savitzky_golay()`, every
+  channel is kept and the detectors of a multi-spectrometer system are
+  filtered separately. `step_gap_derivative()` is its recipe step;
+  `derivative`, `gap` and `segment` can be tuned.
+* `bin_spectra()`: the means of groups of `width` adjacent channels, within
+  each detector, which reduce the number of channels and the noise at the
+  cost of resolution. `step_bin_spectra()` is its recipe step; `width` can
+  be tuned. With `step_spectral_norm(method = "area")` and
+  `step_gap_derivative()`, it gives the preprocessing of the winning team of
+  the EMSLIBS 2019 classification contest (Vrábel et al., 2020).
+* `plasma_uncertainty()`: the uncertainty of the temperature of
+  `boltzmann()` and `saha_boltzmann()`, and of the temperature and
+  composition of `cf_libs()`, by Monte Carlo simulation (JCGM 101:2008).
+  Each draw repeats the fit with the intensities, transition probabilities,
+  electron density and, for a given temperature, the temperature perturbed
+  within their uncertainties; the result gives the standard uncertainty and
+  the interval of each quantity, and the draws. The uncertainties of the
+  intensities are the column `intensity_se` of the lines and those of the
+  transition probabilities their NIST accuracy grades (or `aki_rsd`). The
+  reduced chi-squared of the fit tells whether these uncertainties explain
+  the scatter of the points, or whether other errors (spectral response,
+  self-absorption) dominate. The fits now keep their `lines` (and, for
+  `saha_boltzmann()` and `cf_libs()`, their other arguments in `settings`)
+  for this purpose.
+* `electron_density_uncertainty()`: the electron density of
+  `electron_density()` with its standard uncertainty and interval, from the
+  standard error of the width and the uncertainty of the Stark parameter or
+  of the H-alpha width law.
+* `aki_uncertainty()`: the relative standard uncertainties of transition
+  probabilities from the accuracy grades of the NIST Atomic Spectra
+  Database (one standard deviation; upper bounds).
+* `line_intensities()` gives the standard error of each intensity
+  (`intensity_se`): the noise of the spectrum propagated through the
+  integration and the baseline, or the standard error of the fitted area
+  for the Voigt method. `correct_self_absorption()` turns it into the
+  standard error of the corrected intensity.
+* `response_calibration()`: the relative spectral response of the
+  instrument from spectra of a calibration lamp (such as a
+  deuterium-halogen lamp) and its certified irradiance, with its
+  uncertainty. The certified values are interpolated by a monotone spline of
+  their logarithm, the ratio is smoothed by a local linear fit within each
+  detector, ranges such as the Balmer lines of deuterium can be left out,
+  and the relative standard uncertainty combines those of the certificate
+  and of the measurement (repeated lamp spectra, or the noise of one).
+  `correct_response()` corrects spectra on the same axis, or the
+  intensities of a table of lines (with their standard errors, for
+  `plasma_uncertainty()`), and `plot_response()` draws the response.
+* `peak_fit()` and `multipeak_fit()` gain `fixed`, to hold the Gaussian
+  (or Lorentzian) width at a given value, such as the instrumental width
+  measured on a lamp line combined with the Doppler width: the Lorentzian
+  (Stark) width of a Voigt fit is then much better determined.
+  `doppler_width()` gives the Doppler width of a line from the
+  temperature and the mass of the emitter.
+* `lte_criteria()`: the criteria of local thermodynamic equilibrium of
+  Cristoforetti et al. (2010) for transient and inhomogeneous plasmas, with
+  the McWhirter criterion: the relaxation time to equilibrium and the
+  diffusion length of the atoms meanwhile, from the temperature, the
+  electron density and the gap and oscillator strength of the slowest
+  (resonance) transition. With measurements at several delays, the relative
+  changes of the temperature and density during the relaxation time give
+  the temporal criterion; with the length over which they change (such as
+  the size of the plasma), the diffusion length gives the spatial one.
+* `multipeak_fit()` gains constraints for multiplets: `lock_centers` keeps
+  the separations of the given wavelengths (such as those of the NIST
+  database) with one fitted shift, `share_widths` gives the lines common
+  widths, and `area_ratios` fixes the ratios of their areas (for optically
+  thin lines, the relative intensities of `libs_lines()`). Each constraint
+  applies to all lines, or to groups of lines, so that an interfering line
+  can be left free. `tidied` lists the center, widths and area of every
+  line, with standard errors propagated from the fitted parameters, and the
+  common shifts.
+* `calibration_curve()` fits straight lines with errors in the
+  concentrations, such as the certified values of reference materials:
+  `regression = "york"` (York et al., 2004) with the standard uncertainties
+  of the concentration and signal of each standard (`concentration_se`,
+  `signal_se`), and `regression = "deming"` with a constant ratio of their
+  variances (`variance_ratio`). Least squares, which assume exact
+  concentrations, bias the slope toward zero. The York fit reproduces the
+  Pearson-York benchmark; its standard errors are scaled by the square root
+  of the reduced chi-squared when it exceeds 1. `predict()` and
+  `plot_calibration()` use the fitted line.
+* `calibration_curve()` gains the limits of ISO 11843-2 and IUPAC
+  (`lod_convention = "iso11843"`): the critical value and the limit of
+  detection for the risks `alpha` and `beta` (noncentral t), with the
+  uncertainty of the intercept and the number of `replicates` of a sample,
+  and the limit of quantification at 10 standard deviations. `predict()`
+  marks the samples above the critical value as `detected`, and flags the
+  concentrations outside the range of the standards (`outside_range`).
+* `applicability_domain()` describes the calibration spectra by a PCA, and
+  its `predict()` flags new spectra outside the domain, by their Hotelling
+  T-squared or Q residual (see `q_residuals()`), so that extrapolated
+  predictions of any model can be checked.
+* `curve_of_growth()`: self-absorption by the curve of growth of a
+  homogeneous plasma in LTE (Gornushkin et al., 1999), the model of the
+  C-sigma graphs of Aragón and Aguilera (2014): from the intensities of the
+  lines of one or several species, their Stark widths and the temperature,
+  it fits a common instrument factor and one column density per species,
+  and returns the optical depth at the center, the self-absorption
+  coefficient and the optically thin intensity of each line, ready for
+  `boltzmann()` and `cf_libs()`. The line profiles are Voigt profiles of the
+  Stark and Doppler widths. `curve_of_growth_model()` computes the
+  intensities for given optical depths, and `plot_curve_of_growth()` draws
+  the reduced intensities against the optical depth.
+* Calibration transfer: `ds()` (direct standardization) and `sst()`
+  (spectral space transformation, Du et al., 2011) transfer spectra of a
+  secondary instrument to the primary, from transfer samples measured on both,
+  with low-rank transfer matrices; `slope_bias()` corrects the predictions
+  of a model on the secondary instrument instead, with tests of the bias and
+  slope. `pds()` now returns a `specproc_transfer` object (with the same
+  `transfer_matrix` and `intercept`), and `predict()` transfers spectra with
+  any of the three.
+* `control_chart()` and `plot_control_chart()`: control charts of a quantity
+  that should stay constant, such as an internal standard line or a check
+  sample, to detect drifts of the instrument: Shewhart chart with the
+  Western Electric rules, EWMA and CUSUM, with the center and standard
+  deviation (mean moving range) from a baseline.
+* `line_finder()` builds a Boltzmann plot interactively: clicking the dot of
+  a line marker adds the line to the plot of its species (or removes it),
+  **Add shown lines** adds the lines shown, and clicking a point of the plot
+  leaves it out of the fit. The intensities are measured on the displayed
+  spectrum with `line_intensities()` and the temperature is fitted with
+  `boltzmann()`; a table lists the upper-level energy, signal-to-noise ratio
+  and residual of each line. **Use T** ranks the candidate lines at the
+  fitted temperature, and **Done** closes the app and returns the
+  `boltzmann()` fit to R.
+* Molecular bands: `molecular_bands()` lists the band heads of the
+  electronic systems of diatomic molecules that emit in laser-induced
+  plasmas (CN, C2, CH, OH, NH, N2, N2+, NO, CO, AlO, CaF, CaCl, SrF, SrCl,
+  MgO, TiO, BO, SiO), with their origins, the direction in which they are
+  degraded, Franck-Condon factors (Morse wavefunctions) and relative
+  intensities at a vibrational temperature. They are computed from the
+  constants of Huber and Herzberg (1979), included in the package, and agree
+  with measured heads to about 0.05 nm for the well-studied systems.
+  `plot_lines()` gains `bands` to mark them on a spectrum (and `lines` may
+  be `NULL`), and `line_finder()` overlays the bands of the selected
+  molecules. `molecular_spectrum()` simulates the emission spectrum of a
+  molecule in LTE from a line list of the ExoMol database (the MoLLIST line
+  lists by default), downloaded on demand and convolved with the instrument
+  profile, and `exomol_datasets()` lists the line lists of a molecule.
+* `read_vald()` and `read_kurucz()` read the Stark widths of a line list
+  saved from the Vienna Atomic Line Database (VALD3, free with a
+  registration; "Extract All", "Extract Element" or "Extract Stellar", short
+  or long format, in any wavelength unit) or from the line lists of Kurucz
+  (`gfall*.dat` or the list of one ion), as a table in the format of
+  `starkb_lines()`. Both give, for each line, the quadratic Stark damping
+  constant at 10 000 K, converted to a full width at half maximum and
+  scaled with temperature as T^(1/6). These widths are approximate, but
+  cover many lines that STARK-B does not have. The VAMDC service of VALD
+  could not be queried (it fails on every query, as of October 2026), so
+  VALD is read from saved extracts.
+* `stark_width()`, `electron_density()` and `electron_density_uncertainty()`
+  gain `species`: a table of several species (as read by `read_vald()` and
+  `read_kurucz()`, or combined from several sources) needs the species of
+  the line, as the line is otherwise matched by its wavelength alone and
+  could be a line of another species.
+* Persistent cache of downloaded data: with `options(specProc.cache = TRUE)`
+  (the user cache directory of `tools::R_user_dir()`) or a directory, the
+  data of `nist_lines()`, `nist_ionization_energy()`, `nist_levels()` (and so
+  `libs_lines()` and `line_finder()`), `starkb_lines()` and the ExoMol line
+  lists of `molecular_spectrum()` are kept on disk and reused in later
+  sessions, without an internet connection. Entries older than
+  `specProc.cache_max_age` days (default 180) are downloaded again, and an
+  older copy is used, with a warning, when the database cannot be reached.
+  `download_cache()` lists the cached files and `clear_download_cache()`
+  removes them. The cache is off by default.
+* `tidy()` and `glance()` methods for peak fits, `calibration_curve()`,
+  `wavelength_calibration()`, `slope_bias()`, `boltzmann()`,
+  `saha_boltzmann()`, `cf_libs()`, `plasma_uncertainty()` and
+  `curve_of_growth()`: the estimates with their standard errors and
+  confidence intervals, and a one-row summary of the fit, in the
+  conventions of broom (see `?"specproc-tidy"`), to bind the results of
+  several spectra or samples. The generics are re-exported, and generics
+  (already a dependency of dplyr) moves from Suggests to Imports. The `fit`
+  column of `peak_fit()` and `multipeak_fit()` holds `nls` fits of the new
+  class `specproc_peak_fit`.
+* `tidy()` and `glance()` methods for the chemometric models (see
+  `?"specproc-tidy-models"`): robust PCA (`robpca()`, `rospca()`,
+  `macropca()`, `cellpca()`; eigenvalues, loadings or scores, as for
+  `prcomp` in broom), `rsimpls()` and `rpcr()` (coefficients, components,
+  loadings or scores), `lts_fit()`, `rsimca()`, `robust_da()`, `opls()`,
+  `som()`, `select_wavelengths()`, `nas()` and `applicability_domain()`,
+  with the outlier counts and the figures of merit of each model in
+  `glance()`. Through parsnip, they also summarize the fits and workflows
+  of the `"rsimpls"`, `"lts"`, `"rsimca"` and `"mcd"` engines. `lts_fit()`
+  now keeps the standard errors (`std_error`), residual degrees of freedom
+  and robust R² of the reweighted fit.
+* `medcouple()`: the medcouple of Brys, Hubert and Struyf (2004), a robust
+  measure of skewness with a breakdown value of 25%, of a numeric vector.
+  `sapply(spectra, medcouple)` gives one per wavelength of a set of spectra
+  (channels that saturate the detector have a strongly negative
+  medcouple). It was already used by `adjusted_boxplot()`,
+  `iqr_outliers(skew = TRUE)`, `medcouple_weight()` and
+  `summary_stats(robust = TRUE)`.
+* `plot_medcouple()`: the medcouple of the intensities at each wavelength,
+  as bars along the wavelength axis, or with `group` as a heatmap with one
+  row per group of spectra (such as the shots of each sample). The color
+  scale is fixed from -1 to 1: two colors through white at 0 (blue and red
+  by default), or any gradient (`color = grDevices::hcl.colors(9,
+  "Spectral")`). Interactive versions with plotly.
+* `robust_boxcox()` and `robust_yeojohnson()` replace `robust_bcyj()`, with
+  the recipe steps `step_robust_boxcox()` and `step_robust_yeojohnson()`
+  (the robust counterparts of `recipes::step_BoxCox()` and
+  `recipes::step_YeoJohnson()`). Each fits one transformation, so that the
+  `lambda` of all the variables are on the same scale. They take a vector,
+  matrix or data frame, have a `standardize` argument, and return a fitted
+  object that `predict()` applies to new data, or to any subset of its
+  variables. `robust_boxcox()` warns about the variables with zero or
+  negative values, which it leaves unchanged. `robust = FALSE` gives the
+  classical fit by maximum likelihood (for Box-Cox, the `lambda` of
+  `MASS::boxcox()`), for comparison: the examples show, on synthetic data,
+  outliers that pull the classical `lambda`, skew the transformed regular
+  values and hide among them, but not with the robust fit.
+* `predict(inverse = TRUE)` transforms values back to the original scale
+  after `robust_boxcox()` or `robust_yeojohnson()`, such as the predictions
+  of a calibration fitted to the transformed contents: as the median
+  (`estimate = "median"`, default) or, with the residuals of the model, as
+  the mean (`estimate = "mean"`, the smearing estimate of Duan, 1983).
+  Values beyond the range of the transformation become `NA`, with a
+  warning.
+
+## Improvements
+
+* The title of the package is now "Analysis of Laser-Induced Breakdown
+  Spectroscopy Data": it covers plasma diagnostics, calibration and robust
+  chemometrics, not only preprocessing.
+* The plots share a set of arguments, with the same names and meanings
+  everywhere:
+  - `title`, `xlab`, `ylab` and `base_size` on every plot (added where they
+    were missing, as in `plot_calibration()`, `plot_boltzmann()`,
+    `plot_lines()` and the outlier maps);
+  - `point_size` and `point_alpha` on the plots of points:
+    `plot_calibration()`, whose replicate measurements overlap,
+    `plot_boltzmann()`, `plot_curve_of_growth()`, `plot_control_chart()`,
+    `plot_wavelength_calibration()`, `plot_outlier_map()`,
+    `plot_influence()`, `plot_coomans()`, `plot_embedding()`,
+    `plot_outliers()`, `adjusted_boxplot()`, `generalized_boxplot()`,
+    `plot_shots()`, `plot_som()` and `plot_fit()`;
+  - `wavelength = c(min, max)` on the plots along the wavelength axis, to
+    draw a window without subsetting the spectra first: `plot_lines()`
+    (its markers are then scaled within the window, and the lines and bands
+    outside it left out), `plot_loadings()` and `plot_contributions()` (the
+    largest peaks within the window are labeled), `plot_cell_map()`,
+    `plot_response()`, `plot_wavelength_selection()` and the prototypes of
+    `plot_som()`, as in `plot_spectra()` and `plot_shots()`;
+  - `linewidth` for the spectra and curves drawn along the wavelength axis,
+    with `spectrum_color`, `marker_linewidth` and `marker_alpha` in
+    `plot_lines()`, whose intensity axis is now titled "Intensity (arb.
+    units)", as in `plot_spectra()`;
+  - `interactive` for the plots with a plotly version, and `color_by` for
+    what colors the points.
+* The labels of the plots no longer overlap: they are placed by ggrepel
+  (now imported), away from each other and from the points, with a segment
+  to their point when moved far. This applies to the outlying samples of
+  `plot_outlier_map()`, `plot_influence()`, `plot_coomans()`,
+  `plot_outliers()` and `plot_embedding()` (and its biplot loadings), the
+  peaks of `plot_loadings()`, `plot_contributions()`, `plot_cell_map()` and
+  `plot_fit()`, the outliers of `adjusted_boxplot()` and
+  `generalized_boxplot()` (where many crowd together, some are left
+  unlabeled), the rejected shots of `plot_shots()`, the spectra of
+  `plot_spectra(label_spectra = TRUE)`, and the lines of
+  `plot_wavelength_calibration()`, which are now all labeled.
+* `robpca()` and `rospca()` are faster on wide data (up to about 4 times on
+  full LIBS spectra): the reduction to the subspace spanned by the
+  observations is now computed in C++ from the smaller cross-product matrix
+  instead of an SVD. The results are unchanged up to numerical precision.
+* `plot_spectra()` has new arguments: `panel`, a grouping variable that
+  splits the spectra into panels, arranged one above the other or side by
+  side (`layout = "vertical"` or `"horizontal"`), with the `offset` restarting
+  in each panel; `grid`, to draw grid lines; and `color_as = "fill"`, to show
+  the colors of `colvar` (or `id`) as the fill of the area under each
+  spectrum instead of the line color. Spectra stacked with a vertical offset
+  are then filled with opaque colors, the front ones hiding the back ones, as
+  in a waterfall plot.
+* `plot_spectra()` makes figures ready for publication:
+  - `legend` shows the legend of `colvar` (a color bar) or `id`, on any side
+    or inside the plot, titled by `legend_title` (such as `"K (%)"`);
+  - `xlab`, `ylab` and `title` set the axis titles and the plot title (bold,
+    split into a title and a subtitle when long), and the intensities are
+    written in plain notation ("100,000" rather than "1e+05");
+  - `lines`, a line list from `libs_lines()`, marks the emission lines with
+    dashed lines, labeled with their species and wavelength above the plot
+    (close lines share a label);
+  - `palette` sets the colors: a viridis palette (`"viridis"`, the default,
+    `"magma"`, `"cividis"`, ...) or any colors;
+  - `base_size` and `linewidth` size the text and the lines for the printed
+    figure (such as 8 points and 0.3 for a journal column);
+  - `wavelength = c(min, max)` limits the wavelength range, as in
+    `peak_fit()` and `nist_lines()`; a list of ranges draws them side by
+    side, each with its own wavelength axis, such as
+    `list("Ca II H and K" = c(392, 398), "K I" = c(765, 771))`, with the
+    groups of `panel` in rows; `scales = "free_y"` fits the intensity axis
+    to each panel;
+  - `transform` applies a preprocessing function of specProc (such as
+    `snv`, `baseline_als()` or `savitzky_golay()`), a function of your own,
+    or a list of them in order, to the whole spectra before they are drawn,
+    keeping the `id`, `colvar` and `panel` columns;
+  - `panel_tags` tags the panels (a), (b), (c), ...;
+  - `label_spectra` labels each spectrum at its right end, with its `id` or
+    value of `colvar`;
+  - `summary = "mean"` or `"median"` draws the mean spectrum of each group
+    (panel and `id`) with a band of one standard deviation, or the median
+    with the quartiles;
+  - `rasterize` draws the spectra as an image within an otherwise vector
+    plot, for small PDF files of many long spectra (needs the ragg package).
+
+  The help page gives the sizes for journal figures. The colors of `colvar`
+  now go from dark purple to yellow-green (viridis), instead of from blue to
+  red, readable by colorblind readers and in grayscale; use
+  `palette = c("blue", "red")` for the former colors. The axis lines are
+  slightly thinner.
+* `adjusted_boxplot()` and `generalized_boxplot()` make figures ready for
+  publication:
+  - each variable is drawn in its own panel, with its own value axis
+    (`scales = "free_y"`, the default), so that variables of different
+    scales stay readable; `scales = "fixed"` keeps a common axis;
+  - `group` draws the boxes of groups (sites, treatments, ...) side by side,
+    and `id` names the observations: the `outliers` table gives the `row`
+    and `id` of every outlying value, and `label_outliers` labels them;
+  - the number of values is written below each box (`show_n`), and
+    `show_mean` marks the means;
+  - `points = "all"` draws every observation (`"outliers"` by default,
+    spread sideways so that equal values do not hide each other, or
+    `"none"`);
+  - a caption names the boxplot and its whiskers, which readers would take
+    for Tukey's otherwise (`caption`); the help pages give a figure legend;
+  - `xlab`, `ylab`, `title` (bold), `base_size`, `horizontal`, `log` (a
+    logarithmic axis) and `fill` (one color, or one per group or variable);
+  - the `stats` table gives `n`, the fences, the notch limits, the `mean`
+    and `n_outliers` of each variable (and group);
+  - `annotate` writes statistics with each box: the shape measured by the
+    method (medcouple, or g and h), the number of flagged values with the
+    number expected in clean data, the median with its distribution-free
+    95% confidence interval, the IQR and the robust coefficient of variation;
+    it draws the fences and the biweight location, gives the p-value of a
+    Kruskal-Wallis test between the groups, and the number of missing
+    values. The `stats` table gains these values (`n_missing`,
+    `median_lower`, `median_upper`, `iqr`, `rcv`, `biweight`,
+    `expected_outliers`), and a `tests` table gives the tests.
+* `plot_outliers()` makes figures ready for publication: readable variable
+  names, a "Robust z-score" axis, outliers in red among grey samples
+  ("Regular" and "Outlier"), dashed univariate limits (z = -2.5 and 2.5),
+  and a caption saying how the outliers are flagged and how to read the
+  plot. `type = "distance"` draws the robust distance of each sample with
+  the cutoffs. `id` names the samples, in the table and with
+  `label_outliers`; `color_by` (`"outlier"`, `"distance"` or `"both"`),
+  `plot = FALSE` (the table: row, id, distance, cutoff, outlier, weight and
+  robust z-scores), `title`, `ylab` and `base_size`. Rows with missing values
+  are left out, with a message, instead of stopping.
+* `plot_fit()` gives, above each panel, the center, FWHM and area of each
+  peak with their standard errors (rounded to two significant digits of
+  them), and R^2 and RMSE. The FWHM of a Voigt profile combines its widths
+  (Olivero and Longbothum, 1977), with a standard error from the covariance
+  of the estimates. `show_fwhm` draws the FWHM at half maximum; the baseline
+  is dotted, the peaks of a multi-peak fit are numbered, the residuals have
+  dashed limits at plus or minus twice the RMSE, and a caption names the
+  profiles. The data are small open circles, with a legend; `xlab`, `ylab`,
+  `base_size`, `ncol` (several spectra: a pair of panels each) and `caption`
+  are added.
+* `plot_embedding()` makes figures ready for publication: plain axis numbers
+  ("-100,000" rather than "-1e+05"); `base_size`, which scales the text,
+  points, lines and labels; a caption saying what the ellipses and limits
+  are; `legend_title`; a point shape per group (`shapes`), for grayscale
+  printing; `palette`; `aspect_ratio = "equal"`; `legend` (position) and
+  `panel = "white"`. The labels of the flagged samples alternate above and
+  below the points, and the short loadings of a biplot are drawn without
+  labels, which overlapped near the origin.
+* `hotelling_t2()` and `plot_embedding()` give the limit of a new sample,
+  `method = "new"` (the F limit times (n + 1) / n). The docs no longer call
+  the F limit the limit of a new sample.
+* The axis titles of `plot_spectra()` and `plot_fit()` give the units in
+  parentheses, as in the other plots: "Wavelength (nm)" and
+  "Intensity (arb. units)".
+* `wavelet_features()` keeps the wavelengths: when the names of the spectra
+  are wavelengths, the attribute `"wavelength"` of the coefficients gives
+  the wavelength at the center of the window of channels of each one (the
+  centroid of its weights for the approximation, their center of energy for
+  the details, which are not centered on the block of `2^level` channels:
+  about 37 channels later for `"la8"` at level 4). `tidy()` of
+  `step_wavelet()` gains the `wavelength` of the kept coefficients, to trace
+  them back to the spectrum. A named vector now keeps its names.
+* specProc now requires ggplot2 3.5.0 or later.
+* scales moves from Suggests to Imports, since the plots use it; it was
+  already installed with ggplot2.
+* The examples of `zscore()`, `iqr_outliers()` and
+  `directional_outlyingness()` start with synthetic data whose outliers are
+  known, drawn as a density plot: a cluster of outliers that hides itself
+  from the classical z-score (masking), and a right-skewed sample with low
+  and high outliers, on which the fences that account for the skewness and
+  the directional outlyingness flag the outliers and no regular value of the
+  long tail.
+
+## Breaking changes
+
+* The functions renamed in specProc 0.2.0 and 0.8.0 (`peakfit()`,
+  `multipeakfit()`, `plotfit()`, `plotSpec()`, `summaryStats()`,
+  `tukeyGH()`, `boltzmann_plot()` and the others listed in
+  `?"specProc-defunct"`), deprecated until 0.8.3, are now defunct: they stop
+  with an error that names the new function, and will be removed in a later
+  release.
+* Arguments with dotted or camelCase names are renamed in snake_case, as in
+  the rest of the package. The former names still work, with a deprecation
+  warning:
+  - `max.iter` becomes `max_iter` in `baseline_als()`, `baseline_arpls()`,
+    `baseline_lsp()`, `osc()`, `peak_fit()` and `multipeak_fit()`;
+  - `drop.na` becomes `drop_na` (as in `plot_spectra()`) in
+    `biweight_location()`, `biweight_midvariance()`, `biweight_scale()`,
+    `center()`, `iqr_outliers()`, `medcouple_weight()`, `minmax()`, `msc()`,
+    `normalize()`, `pareto_scale()`, `poisson_scale()`, `quantile_weight()`,
+    `rousseeuw_croux()`, `snv()`, `summary_stats()`, `umad()` and `zscore()`;
+  - `drop.offset` becomes `drop_offset` in `msc()` and `step_msc()`, and
+    `pls.ncomp` becomes `pls_ncomp` in `osc()`;
+  - `.group_by` becomes `group_by` in `average()`, `log.p` becomes `log_p`
+    in `tukey_gh()`, and `launch.browser` becomes `launch_browser` in
+    `line_finder()`;
+  - in `directional_outlyingness()`, `cutoff.quantile`, `rmZeroes`,
+    `maxRatio` and `precScale` become `cutoff_quantile`, `rm_zeroes`,
+    `max_ratio` and `prec_scale`;
+  - in `peak_fit()` and `multipeak_fit()`, `wavelength = c(min, max)`
+    replaces `wlgth.min` and `wlgth.max`, as the wavelength range of
+    `nist_lines()` and `libs_lines()`. Calls that gave the arguments after
+    `A` by position must name them.
+* The number of components is `ncomp` in all the functions, as in
+  `rsimpls()`, `rpcr()`, `rsimca()`, the PLS and OSC functions and the pls
+  package, and the largest number of components considered is `ncomp_max`.
+  The former names still work, with a deprecation warning, and the new
+  names keep the positions of the former ones:
+  - `k` becomes `ncomp` in `robpca()`, `rospca()`, `macropca()`,
+    `cellpca()`, `q_residuals()`, `dmodx()`, `contributions()`,
+    `hotelling_t2()` and `plot_embedding()`;
+  - `kmax` becomes `ncomp_max` in `robpca()`, `macropca()` and `cellpca()`,
+    and so in the `options` of `step_robpca()`, `step_macropca()` and
+    `step_cellpca()`.
+
+  The fits of `robpca()`, `rospca()`, `macropca()` and `cellpca()` keep
+  their number of components in `ncomp` instead of `k`, and the results of
+  `q_residuals()`, `dmodx()` and `contributions()` in the attribute
+  `ncomp`: code that reads `fit$k` now gets `NULL`. The `k` of
+  `iqr_outliers()`, the fence factor, keeps its name.
+* `rospca()` chooses its number of components when `ncomp` is not given,
+  as `robpca()`: the smallest number that explains `var_explained` (new,
+  0.8) of the variance of the least outlying observations, with at most
+  `ncomp_max` (new, 10). `ncomp` was 2 by default; `rospca(x, ncomp = 2)`
+  gives the former result.
+* `generalized_boxplot()` flags fewer observations: its default detection
+  rate `alpha` is now about 0.7% (`2 * pnorm(-4 * qnorm(0.75))`), that of
+  Tukey's boxplot for normal data, as in the authors' implementation (the
+  Stata command `robbox`), instead of 5%. With 5%, about 18 of the 368
+  `forageLIBS` samples were flagged per mineral even in clean data; use
+  `alpha = 0.05` for the former fences (see also the bug fixes).
+* `adjusted_boxplot()` and `generalized_boxplot()` draw one panel per
+  variable, boxes in light grey (the colors of each variable added
+  nothing, and depended on whether ggsci was installed) and horizontal
+  labels. `scales = "fixed"` and `fill` give the former layout and colors.
+* The arguments `xlabels.angle`, `box.width`, `notchwidth` and
+  `staplewidth` of `adjusted_boxplot()` and `generalized_boxplot()` are
+  renamed `x_labels_angle`, `box_width`, `notch_width` and `staple_width`,
+  and `xlabels.hjust` and `xlabels.vjust` are deprecated (the justification
+  follows the angle). The former names still work, with a warning.
+* The `outliers` table of `adjusted_boxplot()` has the columns `row` and
+  `out` (the tail), as that of `generalized_boxplot()`.
+* `reject_shots()` (and `step_reject_shots()`) rejects far fewer regular
+  shots. With the few shots of a sample, the MAD of the sample is unstable:
+  shots that differed by little from very similar shots got large
+  z-scores, and the correlations near 1, bounded and skewed, made small
+  differences look extreme. On the 2944 shots of the forage data set, 235
+  shots were rejected, many with a correlation above 0.99 with the median
+  spectrum of their sample; in simulations, 2.5% to 5% of regular shots
+  were. The z-scores of the correlation are now those of Fisher's z, the
+  intensity and the distance are on a log scale, and the scale of a sample
+  is its MAD but not less than the pooled MAD of all the samples (`scale =
+  "floor"`, the default; `"sample"` and `"pooled"` are the others): 10
+  shots of the forage data set are rejected (weak or strong plasmas of
+  other shapes), and 0.1% to 0.5% of regular shots in simulations, while
+  the shots of a plasma weakened by a quarter or more are still detected.
+  The result also gives the shot number `.shot` (new argument `shot`), the
+  raw criteria `.intensity` (relative to the median shot of the sample),
+  `.correlation` and `.distance`, and its settings.
+* The arguments of the points and lines of `plot_fit()` are renamed
+  `point_size`, `point_color`, `linewidth` and `fit_color` (from `pt.size`,
+  `pt.colour`, `line.size` and `line.colour`); `pt.shape`, `pt.fill`,
+  `linetype` and the `resid.*` arguments are deprecated and ignored.
+* `plot_outliers()` flags the samples beyond the adaptive cutoff of
+  Filzmoser, Garrett and Reimann (2005), as `aq.plot()` of the mvoutlier
+  package, instead of the fixed 97.5% chi-squared quantile, which flags
+  about 2.5% of clean data (the adaptive part had no effect: the cutoff was
+  the smaller of the two). In `forageLIBS`, 29 of the 368 samples are
+  flagged on Ca, Mg, P and K instead of 38. `cutoff = "quantile"` gives the
+  former flags. `show.outlier` and `show.mahal` are deprecated in favor of
+  `color_by` and `plot = FALSE`, and the table gains the columns `row`,
+  `cutoff` and `weight`.
+* Plot arguments are renamed to the names shared by the plots (see
+  Improvements). The former names still work, with a deprecation warning:
+  - `plot_spectra(.interactive)` becomes `interactive`;
+  - `plot_outlier_map(colour_by)` and `plot_influence(colour_by)` become
+    `color_by`, and `plot_som(colour)` becomes `color_by`;
+  - `plot_embedding(colour, size, alpha)` become `color_by`, `point_size`
+    and `point_alpha`. A number in `point_size` is the size of the points;
+    the default, and a number in the former `size`, scale with `base_size`.
+
+  The sizes and opacities of the points of `plot_outlier_map()`,
+  `plot_influence()` and `plot_coomans()` can still be given in `...`
+  (`size`, `alpha`), as other arguments of `ggplot2::geom_point()`.
+* The loadings of `robpca()` now have a fixed sign, their largest element
+  positive, as those of `macropca()` and `cellpca()`. The signs of loadings
+  and scores may differ from those of earlier versions.
+* `robust_bcyj()` and `step_robust_bcyj()` are deprecated in favor of
+  `robust_boxcox()`, `robust_yeojohnson()` and their recipe steps (see New
+  features). They still work, with a deprecation warning, and the recipes
+  trained with `step_robust_bcyj()` can still be baked. Their default,
+  `type = "bestObj"`, chose Box-Cox or Yeo-Johnson for each variable by a
+  difference in fit that is often negligible (each for about half of the
+  forageLIBS channels), and mixed two scales of `lambda`. The defunct
+  `robustBCYJ()` now names the new functions.
+* The functions of a single variable (`biweight_location()`,
+  `biweight_scale()`, `biweight_midvariance()`, `umad()`, `iqr_outliers()`,
+  `medcouple_weight()`, `quantile_weight()`, `zscore()`, `minmax()` and
+  `directional_outlyingness()`, as `medcouple()`) stop when `x` is a matrix,
+  instead of pooling all its values into one result (one location of all
+  the channels of a set of spectra, for example). The message shows how to
+  get one result per column, with `sapply(x, f)` for a data frame or
+  `apply(x, 2, f)` for a matrix. Data frames already gave an error.
+* `directional_outlyingness()` flags the observations whose score exceeds
+  the `(1 + cutoff_quantile) / 2` quantile of the standard normal
+  distribution (2.81 by default), about 0.5% of the observations of a
+  normal distribution. The cutoff came from a robust normal fit to
+  `log(0.1 + score)`: on one variable it lay near 5 to 6 scales from the
+  median, so that no observation of normal data was flagged, nor, in a
+  right-skewed sample, a high outlier at 6 scales or low outliers below the
+  distribution. More observations are flagged. `cutoff_quantile` must be
+  strictly between 0 and 1. The scales of the two half samples now follow
+  equation (2) of Rousseeuw, Raymaekers and Hubert (2018) exactly, with the
+  consistency constant alpha of Huber's rho function instead of a rounded
+  one: the scores are 0.4% higher, and the help page gives the formula.
+
+## Bug fixes
+
+* `nist_lines()` accepts several species, such as `c("Ca I", "Ca II")`, as
+  in the plasma diagnostics vignette, and returns their lines in one table;
+  it accepted only one ("'species' must be a single character string").
+* `starkb_lines()`, `nist_lines()`, `nist_levels()` and
+  `nist_ionization_energy()` try a download again, up to three times, when
+  the server is busy (HTTP 5xx errors, such as 504 Gateway Timeout), and
+  report the HTTP status when the download fails, instead of a less telling
+  message such as "downloaded length 0 != reported length 160".
+* The `timeout` of the functions that download data (`nist_lines()`,
+  `nist_levels()`, `nist_ionization_energy()`, `libs_lines()`,
+  `starkb_lines()`, `molecular_spectrum()`, `exomol_datasets()`) is the time
+  after which a download is given up, even when the option `timeout` is
+  larger: a server that did not answer was waited for as long as the option.
+* `generalized_boxplot()` now follows Bruffaerts et al. (2014) and the
+  authors' implementation: the transformed data are standardized by their
+  interquartile range divided by `diff(qnorm(c(0.25, 0.75)))` = 1.349 (was
+  1.3426); a negative tail parameter `h` (tails lighter than normal) is
+  kept instead of being set to 0, which widened the fences of such
+  variables (in `forageLIBS`, at alpha = 0.7%, the upper fence of Ca was
+  1.25 instead of 1.19); and the fences are never inside the box.
+* `notch = TRUE` failed in `adjusted_boxplot()` and `generalized_boxplot()`
+  ("object 'notchlower' not found"); the notches span the median
+  plus or minus 1.58 IQR / sqrt(n) (McGill et al., 1978).
+* `plot_spectra()` drew straight lines across the gaps between detectors
+  (in `forageLIBS`, 781.5 to 789.2 nm and 800.7 to 813.9 nm), and joined the
+  channels of overlapping detectors in a zigzag (near 766 nm, on the K I
+  766.49 nm line). Each detector is now drawn as its own line.
+* `robpca()` and `rospca()` failed, or flagged most observations as
+  orthogonal outliers, when `ncomp` equaled the rank of the data (for
+  example `ncomp = 5` with 5 variables, `ncomp = n - 1` with more variables
+  than observations, or an `ncomp` chosen by `var_explained` for data with few
+  variables): the orthogonal distances to a subspace that is the whole space
+  are rounding errors, and their cut-off was zero. As in Hubert, Rousseeuw
+  and Vanden Branden (2005), ROBPCA then reduces to the reweighted MCD of the
+  data: the reweighting on the orthogonal distances is skipped, and H1 is the
+  subset H0 of the least outlying observations (as in the rospca package).
+  The orthogonal distances and their cut-off are now zero, with no
+  orthogonal outliers, in `robpca()`, `rospca()` and `macropca()`, and for
+  new observations of `predict()` that lie in the subspace.
+* `robpca()`, `rospca()` and `macropca()` no longer depend on the units of
+  the data: their numerical tolerances (singular subsets of FAST-MCD, zero
+  scales of the outlyingness, the cut-off of the orthogonal distances, the
+  rank and the C-steps of `macropca()`, and the constant variables of the
+  detection of deviating cells) are relative to the scale of the data
+  instead of absolute. Robust PCA failed on data with a small scale ("No
+  non-singular subset found" for values around 1e-8, or a zero cut-off of
+  the orthogonal distances when they were all below 1.5e-8), and
+  `macropca()` gave different results. With the same seed,
+  `robpca(x * c)` now gives the same subsets and outlier types as
+  `robpca(x)` for any `c > 0`. The final step of `macropca()` now always
+  uses the deterministic MCD when it succeeds: cellWise compares its
+  log-determinant with the determinant of the C-steps, a comparison that
+  depends on the units, and keeps it in the usual case.
+* The help page of `quantile_weight()` says what `p` and `q` are (the
+  probabilities that choose the quantiles compared in each half of the
+  distribution) and gives the right breakdown value and normal values: the
+  defaults have a breakdown value of 6.25%, not 12.5% (which needs
+  `p = 0.25` and `q = 0.75`), and give LQW = RQW = 0.249 at the normal
+  distribution, not 0.2 (the value of the medcouple weights). The breakdown
+  value of `medcouple_weight()` is 12.5%, not 25%: the medcouple resists 25%
+  of outliers, but is computed on each half of the observations.
+
 # specProc 0.8.3
 
 ## New features

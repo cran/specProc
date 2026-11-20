@@ -1,6 +1,6 @@
 # Robust Box-Cox and Yeo-Johnson transformations to central normality, after
-# Raymaekers and Rousseeuw (2021). Used by robust_bcyj() and
-# step_robust_bcyj(). Not exported.
+# Raymaekers and Rousseeuw (2021). Used by robust_boxcox(), robust_yeojohnson()
+# and their recipe steps (and by the deprecated robust_bcyj()).
 #
 # For each variable:
 #  1. The variable is pre-standardized: divided by its median for Box-Cox
@@ -54,17 +54,39 @@ transform_values <- function(x, lambda, type) {
   if (type == "BC") bc_transform(x, lambda) else yj_transform(x, lambda)
 }
 
-# Inverse transformations (on the domain of the transformation).
+# Inverse transformations: NA beyond the range of the transformation (the
+# Box-Cox transformation is bounded above for lambda < 0; the Yeo-Johnson
+# transformation above for lambda < 0 and below for lambda > 2).
 bc_inverse <- function(y, lambda) {
-  if (abs(lambda) < 1e-8) exp(y) else (lambda * y + 1)^(1 / lambda)
+  if (abs(lambda) < 1e-8) {
+    return(exp(y))
+  }
+  out <- rep(NA_real_, length(y))
+  base <- lambda * y + 1
+  ok <- !is.na(base) & base > 0
+  out[ok] <- base[ok]^(1 / lambda)
+  out
 }
 
 yj_inverse <- function(y, lambda) {
-  if (y >= 0) {
-    if (abs(lambda) < 1e-8) expm1(y) else (lambda * y + 1)^(1 / lambda) - 1
+  out <- rep(NA_real_, length(y))
+  pos <- which(!is.na(y) & y >= 0)
+  neg <- which(!is.na(y) & y < 0)
+  if (abs(lambda) < 1e-8) {
+    out[pos] <- expm1(y[pos])
   } else {
-    if (abs(lambda - 2) < 1e-8) -expm1(-y) else 1 - (1 - (2 - lambda) * y)^(1 / (2 - lambda))
+    base <- lambda * y[pos] + 1
+    ok <- base > 0
+    out[pos[ok]] <- base[ok]^(1 / lambda) - 1
   }
+  if (abs(lambda - 2) < 1e-8) {
+    out[neg] <- -expm1(-y[neg])
+  } else {
+    base <- 1 - (2 - lambda) * y[neg]
+    ok <- base > 0
+    out[neg[ok]] <- 1 - base[ok]^(1 / (2 - lambda))
+  }
+  out
 }
 
 # The point beyond which the transformation is rectified: on the side that it
@@ -143,8 +165,16 @@ transform_loglik <- function(x, lambda, type, w) {
   -sum(w) / 2 * log(v) + (lambda - 1) * sum(w * jacobian)
 }
 
-# Fits one transformation (BC or YJ) to a pre-standardized variable.
-fit_one_transformation <- function(x, type, quantile, nbsteps) {
+# Fits one transformation (BC or YJ) to a pre-standardized variable: robustly,
+# or by classical maximum likelihood on all the values (robust = FALSE).
+fit_one_transformation <- function(x, type, quantile, nbsteps, robust = TRUE) {
+  if (!robust) {
+    lambda <- stats::optimize(function(l) transform_loglik(x, l, type, rep(1, length(x))),
+                              transformation_range, maximum = TRUE)$maximum
+    y <- transform_values(x, lambda, type)
+    return(list(lambda = lambda, type = type, mean = mean(y), sd = stats::sd(y),
+                objective = normality_objective(y)))
+  }
   quartiles <- stats::quantile(x, c(0.25, 0.75), names = FALSE)
   initial <- function(lambda) normality_objective(rectified_transform(x, lambda, type, quartiles))
   grid <- seq(transformation_range[1], transformation_range[2], by = 0.25)
@@ -169,7 +199,7 @@ fit_one_transformation <- function(x, type, quantile, nbsteps) {
 
 # Fits the transformation of each column of a numeric matrix.
 robust_transformation <- function(x, type = "bestObj", quantile = 0.99, nbsteps = 2,
-                                  standardize = TRUE) {
+                                  standardize = TRUE, robust = TRUE) {
   x <- as_numeric_matrix(x, "x")
   fits <- lapply(seq_len(ncol(x)), function(j) {
     v <- x[, j]
@@ -188,13 +218,31 @@ robust_transformation <- function(x, type = "bestObj", quantile = 0.99, nbsteps 
     candidates <- lapply(types, function(t) {
       center <- if (t == "BC") 0 else stats::median(v)
       scale <- if (t == "BC") stats::median(v) else stats::mad(v)
-      fit <- fit_one_transformation((v - center) / scale, t, quantile, nbsteps)
+      fit <- fit_one_transformation((v - center) / scale, t, quantile, nbsteps, robust)
       c(fit, list(center = center, scale = scale))
     })
     candidates[[which.min(vapply(candidates, `[[`, numeric(1), "objective"))]]
   })
   names(fits) <- colnames(x)
-  structure(list(fits = fits, standardize = standardize), class = "specproc_transformation")
+  if (type == "BC") {
+    warn_nonpositive(x)
+  }
+  structure(list(fits = fits, standardize = standardize), variables = colnames(x),
+            nvar = ncol(x), class = "specproc_transformation")
+}
+
+# Box-Cox leaves the variables with zero or negative values unchanged.
+warn_nonpositive <- function(x) {
+  nonpositive <- which(apply(x, 2, function(v) any(v <= 0, na.rm = TRUE)))
+  if (length(nonpositive) == 0) {
+    return(invisible())
+  }
+  nms <- colnames(x)[nonpositive] %||% paste0("V", nonpositive)
+  shown <- paste(utils::head(nms, 5), collapse = ", ")
+  if (length(nms) > 5) shown <- paste0(shown, ", ...")
+  warning("The Box-Cox transformation needs strictly positive values; ", length(nms),
+          " variable(s) with zero or negative values are left unchanged (", shown,
+          "). Use the Yeo-Johnson transformation for them.", call. = FALSE)
 }
 
 # Applies fitted transformations to the columns of a numeric matrix.
@@ -206,9 +254,312 @@ apply_transformation <- function(x, transformation) {
     f <- fits[[j]]
     if (f$type == "none") next
     v <- (x[, j] - f$center) / f$scale
+    if (f$type == "GH") {
+      y <- gandh_scores(v, f$A, f$B, f$g, f$h)
+      undefined <- sum(is.na(y) & !is.na(v))
+      if (undefined > 0) {
+        warning(undefined, " value(s) are outside the fitted g-and-h support or numerical range; they are NA.",
+                call. = FALSE)
+      }
+      out[, j] <- if (transformation$standardize) (y - f$mean) / f$sd else y
+      next
+    }
     if (f$type == "BC") v[!is.na(v) & v <= 0] <- NA_real_
     y <- transform_values(v, f$lambda, f$type)
     out[, j] <- if (transformation$standardize) (y - f$mean) / f$sd else y
   }
   out
+}
+
+# Fits robust_boxcox() (type "BC") or robust_yeojohnson() (type "YJ") and
+# applies the transformation to the data.
+robust_power <- function(x, type, quantile, nbsteps, standardize, robust = TRUE) {
+  x <- as_numeric_matrix(x, "x")
+  check_transformation_args(quantile, nbsteps, standardize)
+  check_flag(robust, "robust")
+  if (is.null(colnames(x))) {
+    colnames(x) <- paste0("V", seq_len(ncol(x)))
+  }
+  fit <- robust_transformation(x, type = type, quantile = quantile, nbsteps = nbsteps,
+                               standardize = standardize, robust = robust)
+  res <- list(
+    transformation = as_tbl(apply_transformation(x, fit)),
+    summary = transformation_summary(fit),
+    fits = fit$fits,
+    standardize = standardize,
+    robust = robust
+  )
+  structure(res, variables = colnames(x), nvar = ncol(x),
+            class = c(if (type == "BC") "specproc_boxcox" else "specproc_yeojohnson",
+                      "specproc_transformation"))
+}
+
+check_transformation_args <- function(quantile, nbsteps, standardize) {
+  check_number(quantile, "quantile", 0, 1, lower_open = TRUE, upper_open = TRUE)
+  check_count(nbsteps, "nbsteps")
+  check_flag(standardize, "standardize")
+}
+
+# The lambda of each variable (NA for those left unchanged) and the objective.
+transformation_lambda <- function(fits) {
+  unname(vapply(fits, function(f) if (f$type == "none") NA_real_ else f$lambda, numeric(1)))
+}
+
+transformation_summary <- function(fit) {
+  tibble::tibble(
+    variable = names(fit$fits),
+    lambda = transformation_lambda(fit$fits),
+    objective = unname(vapply(fit$fits, `[[`, numeric(1), "objective"))
+  )
+}
+
+#' @export
+print.specproc_transformation <- function(x, ...) {
+  if (inherits(x, "specproc_gandh")) return(print_gandh(x))
+  title <- if (inherits(x, "specproc_boxcox")) {
+    "Box-Cox transformation"
+  } else if (inherits(x, "specproc_yeojohnson")) {
+    "Yeo-Johnson transformation"
+  } else {
+    "Box-Cox/Yeo-Johnson transformation"
+  }
+  title <- paste(if (isFALSE(x$robust)) "Classical" else "Robust", title)
+  lambda <- transformation_lambda(x$fits)
+  done <- !is.na(lambda)
+  cat(title, "\n\n", sep = "")
+  cat("Variables:     ", length(lambda), "\n", sep = "")
+  cat("Transformed:   ", sum(done),
+      if (any(!done)) paste0(" (", sum(!done), " left unchanged)"), "\n", sep = "")
+  if (any(done)) {
+    rng <- vapply(range(lambda[done]), format, character(1), digits = 3)
+    cat("Lambda:        ", if (sum(done) == 1) rng[1] else paste(rng, collapse = " to "),
+        "\n", sep = "")
+  }
+  cat("Standardized:  ", if (isTRUE(x$standardize)) "yes" else "no", "\n", sep = "")
+  cat("\nUse predict(<transformation>, newdata) to transform new data.\n")
+  invisible(x)
+}
+
+#' @title Apply a Robust Transformation to New Data, or Back-Transform
+#'
+#' @description
+#' Transforms new data with the parameters (and, with `standardize =
+#' TRUE`, the mean and standard deviation of the inliers) estimated by
+#' [robust_boxcox()], [robust_yeojohnson()] or [robust_gandh()]. With `inverse = TRUE`, it
+#' transforms values back to the original scale, such as the predictions of
+#' a model fitted to the transformed variables.
+#'
+#' @details
+#' `newdata` can hold any of the variables of the fit, matched by name. A
+#' matrix or vector without column names must have all of them, in their
+#' order.
+#'
+#' The back-transformation undoes, in reverse order, the standardization,
+#' the transformation and the pre-standardization of each variable. When a
+#' model predicts \eqn{\hat{z}} on the transformed scale with symmetric
+#' errors, the back-transformed value \eqn{g^{-1}(\hat{z})} estimates the
+#' median of the variable on the original scale (`estimate = "median"`, the
+#' default). It needs no other assumption, and suits the prediction of one
+#' sample.
+#'
+#' For the power transformations, on the original scale the mean is higher than the median when
+#' \eqn{\lambda < 1} (the transformation compresses the upper tail), and
+#' lower when \eqn{\lambda > 1}. `estimate = "mean"` gives the smearing
+#' estimate of Duan (1983),
+#' \deqn{\hat{x} = \frac{1}{n} \sum_{k=1}^{n} g^{-1}(\hat{z} + e_k),}
+#' where \eqn{e_1, \dots, e_n} are the `residuals` of the model on the
+#' transformed scale (preferably cross-validated, since the residuals of the
+#' fit underestimate the errors of prediction). It assumes no distribution
+#' of the errors, only that they do not depend on \eqn{\hat{z}}. The mean
+#' matters when the predictions are averaged or summed, such as for the mean
+#' content of a lot or a mass balance. It is not robust: an outlying
+#' residual pulls it, so pass the residuals of the inliers of a robust model
+#' (for example, of the spectra that [rsimpls()] does not flag).
+#' Smearing is also available for [robust_gandh()]; the direction of the
+#' mean-median difference depends on its fitted shape and residuals.
+#'
+#' The back-transformation is not defined everywhere, because some
+#' transformations are bounded: the Box-Cox transformation above for
+#' \eqn{\lambda < 0}, and the Yeo-Johnson transformation above for
+#' \eqn{\lambda < 0} and below for \eqn{\lambda > 2}. Values beyond the
+#' bound (with `estimate = "mean"`, values that pass it with one of the
+#' residuals) become `NA`, with a warning.
+#'
+#' @param object An object returned by [robust_boxcox()] or
+#'   [robust_yeojohnson()] or [robust_gandh()].
+#' @param newdata A numeric vector, matrix or data frame with some or all of
+#'   the variables of the fit: new data, or with `inverse = TRUE`, values on
+#'   the transformed scale.
+#' @param inverse A logical value: transform the values back to the
+#'   original scale (`TRUE`), or transform new data (`FALSE`, default).
+#' @param estimate With `inverse = TRUE`, the estimate on the original scale:
+#'   `"median"` (default) or `"mean"`, which needs `residuals`.
+#' @param residuals With `estimate = "mean"`, the residuals of the model on
+#'   the transformed scale: a numeric vector, used for every variable of
+#'   `newdata`, or a matrix or data frame with a column for each of them,
+#'   matched by name (without column names, in the order of the columns of
+#'   `newdata`). Missing values are ignored.
+#' @param ... Not used.
+#'
+#' @return A tibble with the variables of `newdata`, in the order of the
+#'   fit. Missing values stay missing, and with the Box-Cox transformation,
+#'   new values that are zero or negative become `NA`.
+#'
+#' @references
+#'  - Duan, N. (1983). Smearing estimate: a nonparametric retransformation
+#'    method. Journal of the American Statistical Association,
+#'    78(383):605-610.
+#'
+#' @seealso [robust_boxcox()], [robust_yeojohnson()], [robust_gandh()]
+#' @export
+#'
+#' @examples
+#' data(forageLIBS)
+#' contents <- forageLIBS[c("Ca", "K", "P", "Mn")]
+#' fit <- robust_boxcox(contents[1:300, ])
+#' new <- predict(fit, contents[301:368, ])
+#' # back to mg/kg
+#' head(predict(fit, new, inverse = TRUE))
+#' # Box-Cox is not defined for zero or negative values
+#' x <- contents[301:302, ]
+#' x$Ca[2] <- 0
+#' predict(fit, x)
+#'
+#' # a calibration of the transformed Mn contents on the Mn II line at
+#' # 257.61 nm, back to mg/kg
+#' wl <- suppressWarnings(as.numeric(names(forageLIBS)))
+#' line <- forageLIBS[[which.min(abs(wl - 257.61))]]
+#' fit <- robust_boxcox(forageLIBS[1:300, "Mn", drop = FALSE])
+#' model <- lm(Mn ~ log(line), data = data.frame(Mn = fit$transformation$Mn,
+#'                                                line = line[1:300]))
+#' pred <- data.frame(Mn = predict(model, data.frame(line = line[301:368])))
+#' med <- predict(fit, pred, inverse = TRUE)
+#' avg <- predict(fit, pred, inverse = TRUE, estimate = "mean",
+#'                residuals = residuals(model))
+#' summary(avg$Mn / med$Mn)
+#' # the mean content of the 68 samples
+#' c(median = mean(med$Mn), mean = mean(avg$Mn),
+#'   reference = mean(forageLIBS$Mn[301:368]))
+predict.specproc_transformation <- function(object, newdata, inverse = FALSE,
+                                            estimate = c("median", "mean"), residuals = NULL,
+                                            ...) {
+  if (missing(newdata)) {
+    stop("Missing 'newdata' argument.")
+  }
+  check_flag(inverse, "inverse")
+  estimate <- match.arg(estimate)
+  if (!inverse && (estimate == "mean" || !is.null(residuals))) {
+    stop("'estimate' and 'residuals' are used only with inverse = TRUE.")
+  }
+  if (estimate == "mean" && is.null(residuals)) {
+    stop("estimate = \"mean\" needs the 'residuals' of the model, on the transformed scale.")
+  }
+  if (estimate == "median" && !is.null(residuals)) {
+    stop("'residuals' are used only with estimate = \"mean\".")
+  }
+  x <- transformation_newdata(object, newdata)
+  fits <- object$fits[colnames(x)]
+  if (!inverse) {
+    return(as_tbl(apply_transformation(x, list(fits = fits, standardize = object$standardize))))
+  }
+  if (estimate == "mean") {
+    # unnamed residuals follow the columns of newdata, as given
+    given <- colnames(as_numeric_matrix(newdata, "newdata")) %||% colnames(x)
+    res <- transformation_residuals(residuals, given)
+  }
+  out <- x
+  for (v in colnames(x)) {
+    out[, v] <- if (estimate == "median") {
+      invert_values(x[, v], fits[[v]], object$standardize)
+    } else {
+      smear_values(x[, v], res[[v]], fits[[v]], object$standardize)
+    }
+  }
+  undefined <- sum(is.na(out) & !is.na(x))
+  if (undefined > 0) {
+    warning(undefined, if (estimate == "median") {
+      " value(s) are beyond the range of the transformation and have no back-transformation"
+    } else {
+      " value(s) have no mean: with some of the residuals, they are beyond the range of the transformation"
+    }, "; they are NA.", call. = FALSE)
+  }
+  as_tbl(out)
+}
+
+# The columns of new data, a subset of the variables of the fit (all of them,
+# in order, without column names), in the order of the fit.
+transformation_newdata <- function(object, newdata) {
+  x <- as_numeric_matrix(newdata, "newdata")
+  vars <- attr(object, "variables")
+  nms <- colnames(x)
+  if (is.null(nms)) {
+    if (ncol(x) != length(vars)) {
+      stop("'newdata' without column names must have ", length(vars),
+           " column(s), like the data of the fit.", call. = FALSE)
+    }
+    colnames(x) <- vars
+    return(x)
+  }
+  if (anyDuplicated(nms)) {
+    stop("'newdata' has duplicated column names.", call. = FALSE)
+  }
+  unknown <- setdiff(nms, vars)
+  if (length(unknown) > 0) {
+    stop("The columns of 'newdata' must be variables of the fit; not found: ",
+         paste(utils::head(unknown, 5), collapse = ", "), if (length(unknown) > 5) ", ...",
+         ".", call. = FALSE)
+  }
+  x[, intersect(vars, nms), drop = FALSE]
+}
+
+# The residuals of each variable, from a vector (the same for all) or a
+# matrix or data frame with a column per variable.
+transformation_residuals <- function(residuals, vars) {
+  if (is.numeric(residuals) && length(dim(residuals)) < 2) {
+    res <- rep(list(as.vector(residuals)), length(vars))
+  } else {
+    r <- as_numeric_matrix(residuals, "residuals")
+    if (is.null(colnames(r))) {
+      if (ncol(r) != length(vars)) {
+        stop("'residuals' without column names must have one column per variable of 'newdata'.",
+             call. = FALSE)
+      }
+      colnames(r) <- vars
+    }
+    missing_vars <- setdiff(vars, colnames(r))
+    if (length(missing_vars) > 0) {
+      stop("'residuals' has no column for: ", paste(missing_vars, collapse = ", "), ".",
+           call. = FALSE)
+    }
+    res <- lapply(vars, function(v) r[, v])
+  }
+  res <- lapply(res, function(e) e[!is.na(e)])
+  if (any(lengths(res) == 0)) {
+    stop("'residuals' has no values.", call. = FALSE)
+  }
+  stats::setNames(res, vars)
+}
+
+# Back-transforms the values of one variable: undoes the standardization,
+# the transformation and the pre-standardization.
+invert_values <- function(z, f, standardize) {
+  if (f$type == "none") {
+    return(z)
+  }
+  y <- if (standardize) z * f$sd + f$mean else z
+  if (f$type == "GH") {
+    v <- gandh_values(y, f$A, f$B, f$g, f$h) * f$scale + f$center
+    v[!is.na(z) & !is.finite(v)] <- NA_real_
+    return(v)
+  }
+  v <- if (f$type == "BC") bc_inverse(y, f$lambda) else yj_inverse(y, f$lambda)
+  v * f$scale + f$center
+}
+
+# Smearing estimate of the mean (Duan, 1983): the mean of the
+# back-transformed values plus each residual; NA when one of them is not
+# defined.
+smear_values <- function(z, e, f, standardize) {
+  grid <- outer(z, e, `+`)
+  rowMeans(matrix(invert_values(as.vector(grid), f, standardize), nrow = length(z)))
 }

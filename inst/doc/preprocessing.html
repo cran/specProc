@@ -12,7 +12,7 @@
 
 
 
-<title>2. Preprocessing with recipe steps</title>
+<title>Preprocessing with recipe steps</title>
 
 <script>// Pandoc 2.9 adds attributes on both header and div. We remove the former (to
 // be compatible with the behavior of Pandoc < 2.8).
@@ -337,7 +337,7 @@ code > span.er { color: #a61717; background-color: #e3d2d2; }
 
 
 
-<h1 class="title toc-ignore">2. Preprocessing with recipe steps</h1>
+<h1 class="title toc-ignore">Preprocessing with recipe steps</h1>
 
 
 
@@ -388,7 +388,7 @@ cuts into the lines; too large, it misses the curvature of the
 continuum. <code>baseline_arpls()</code> shows the baseline itself:</p>
 <div class="sourceCode" id="cb3"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb3-1"><a href="#cb3-1" tabindex="-1"></a>region <span class="ot">&lt;-</span> wl <span class="sc">&gt;</span> <span class="dv">276</span> <span class="sc">&amp;</span> wl <span class="sc">&lt;</span> <span class="dv">290</span></span>
 <span id="cb3-2"><a href="#cb3-2" tabindex="-1"></a>fitted_baselines <span class="ot">&lt;-</span> <span class="fu">map</span>(<span class="fu">c</span>(<span class="st">`</span><span class="at">1e3</span><span class="st">`</span> <span class="ot">=</span> <span class="fl">1e3</span>, <span class="st">`</span><span class="at">1e5</span><span class="st">`</span> <span class="ot">=</span> <span class="fl">1e5</span>, <span class="st">`</span><span class="at">1e7</span><span class="st">`</span> <span class="ot">=</span> <span class="fl">1e7</span>), \(lambda) {</span>
-<span id="cb3-3"><a href="#cb3-3" tabindex="-1"></a>  <span class="fu">unlist</span>(<span class="fu">baseline_arpls</span>(spectra[<span class="dv">1</span>, ], <span class="at">lambda =</span> lambda, <span class="at">max.iter =</span> <span class="dv">20</span>)<span class="sc">$</span>background)[region]</span>
+<span id="cb3-3"><a href="#cb3-3" tabindex="-1"></a>  <span class="fu">unlist</span>(<span class="fu">baseline_arpls</span>(spectra[<span class="dv">1</span>, ], <span class="at">lambda =</span> lambda, <span class="at">max_iter =</span> <span class="dv">20</span>)<span class="sc">$</span>background)[region]</span>
 <span id="cb3-4"><a href="#cb3-4" tabindex="-1"></a>})</span>
 <span id="cb3-5"><a href="#cb3-5" tabindex="-1"></a>first_spectrum <span class="ot">&lt;-</span> <span class="fu">tibble</span>(<span class="at">wavelength =</span> wl[region], <span class="at">counts =</span> <span class="fu">unlist</span>(spectra[<span class="dv">1</span>, region]))</span>
 <span id="cb3-6"><a href="#cb3-6" tabindex="-1"></a></span>
@@ -409,7 +409,7 @@ follows the continuum without touching them. <code>lambda</code> can
 also be tuned with the model (<code>lambda = tune()</code>, with the
 range of <code>baseline_lambda()</code>).</p>
 <div class="sourceCode" id="cb4"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb4-1"><a href="#cb4-1" tabindex="-1"></a>corrected <span class="ot">&lt;-</span> base <span class="sc">|&gt;</span></span>
-<span id="cb4-2"><a href="#cb4-2" tabindex="-1"></a>  <span class="fu">step_baseline</span>(<span class="fu">all_predictors</span>(), <span class="at">lambda =</span> <span class="fl">1e5</span>, <span class="at">options =</span> <span class="fu">list</span>(<span class="at">max.iter =</span> <span class="dv">20</span>))</span></code></pre></div>
+<span id="cb4-2"><a href="#cb4-2" tabindex="-1"></a>  <span class="fu">step_baseline</span>(<span class="fu">all_predictors</span>(), <span class="at">lambda =</span> <span class="fl">1e5</span>, <span class="at">options =</span> <span class="fu">list</span>(<span class="at">max_iter =</span> <span class="dv">20</span>))</span></code></pre></div>
 <p><code>step_baseline()</code> corrects each spectrum on its own and
 estimates nothing from the training data, so it gives the same result
 inside or outside a resampling loop. To avoid repeating it in every
@@ -517,11 +517,14 @@ than the normalization factor.</p>
 <tbody>
 <tr class="odd">
 <td>Smoothing, derivatives</td>
-<td><code>step_savgol()</code></td>
+<td><code>step_savgol()</code>, <code>step_wavelet_denoise()</code>
+(wavelet denoising), <code>step_gap_derivative()</code> (gap-segment
+derivative)</td>
 </tr>
 <tr class="even">
 <td>Compression</td>
-<td><code>step_wavelet()</code> (wavelet coefficients),
+<td><code>step_bin_spectra()</code> (means of adjacent channels),
+<code>step_wavelet()</code> (wavelet coefficients),
 <code>step_line_intensities()</code> (line intensities)</td>
 </tr>
 <tr class="odd">
@@ -537,10 +540,12 @@ than the normalization factor.</p>
 <code>step_o2pls()</code>, <code>step_y_gradient_glsw()</code></td>
 </tr>
 <tr class="odd">
-<td>Robust transformations</td>
-<td><code>step_robust_bcyj()</code>, <code>step_robpca()</code>,
-<code>step_rospca()</code>, <code>step_macropca()</code>,
-<code>step_cellpca()</code></td>
+<td>Robust transformations, PCA and PLS</td>
+<td><code>step_robust_boxcox()</code>,
+<code>step_robust_yeojohnson()</code>, <code>step_robust_gandh()</code>,
+<code>step_robpca()</code>, <code>step_rospca()</code>,
+<code>step_macropca()</code>, <code>step_cellpca()</code>,
+<code>step_rsimpls()</code></td>
 </tr>
 <tr class="even">
 <td>Replicate shots</td>

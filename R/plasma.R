@@ -19,8 +19,8 @@
 #' that of the slope.
 #'
 #' The intensities must be corrected for the spectral response of the
-#' instrument, and the lines must be optically thin (see
-#' [self_absorption()]). A wide range of upper-level energies gives a more
+#' instrument (see [response_calibration()]), and the lines must be
+#' optically thin (see [self_absorption()]). A wide range of upper-level energies gives a more
 #' precise temperature. Atomic data (\eqn{A_{ki}}, \eqn{g_k}, \eqn{E_k}) can
 #' be taken from the NIST Atomic Spectra Database
 #' (\url{https://physics.nist.gov/PhysRefData/ASD/lines_form.html}).
@@ -38,9 +38,12 @@
 #'  - `r_squared`: the coefficient of determination of the fit;
 #'  - `points`: a tibble with the abscissa `x` (eV) and ordinate `y` of each
 #'    line;
-#'  - `fit`: the `lm` fit of `y` on `x`.
+#'  - `fit`: the `lm` fit of `y` on `x`;
+#'  - `lines`: the lines of the plot.
 #'
-#' Use [plot_boltzmann()] to draw the plot.
+#' Use [plot_boltzmann()] to draw the plot, and [plasma_uncertainty()] to
+#' propagate the uncertainties of the intensities and of the atomic data to
+#' the temperature.
 #'
 #' @references
 #'  - Cristoforetti, G., De Giacomo, A., Dell'Aglio, M., Legnaioli, S.,
@@ -81,7 +84,9 @@ boltzmann <- function(lines, units = "energy") {
     y = boltzmann_ordinate(lines, units),
     stage = if ("stage" %in% names(lines)) as.integer(lines$stage) else rep(1L, nrow(lines))
   )
-  boltzmann_result(points, method = "Boltzmann", units = units)
+  res <- boltzmann_result(points, method = "Boltzmann", units = units)
+  res$lines <- tibble::as_tibble(lines)
+  res
 }
 
 #' @title Plasma Temperature from a Saha-Boltzmann Plot
@@ -115,7 +120,8 @@ boltzmann <- function(lines, units = "energy") {
 #' @param tol The relative tolerance on the temperature. Default is 1e-8.
 #'
 #' @return An object of class `specproc_boltzmann`, as for
-#'   [boltzmann()], with the number of iterations in `iterations`.
+#'   [boltzmann()], with the number of iterations in `iterations`, the
+#'   `electron_density`, and the other arguments of the fit in `settings`.
 #'
 #' @references
 #'  - Aguilera, J.A., Aragón, C. (2004). Characterization of a laser-induced
@@ -161,26 +167,21 @@ saha_boltzmann <- function(lines, ionization_energy, electron_density, units = "
   y0 <- boltzmann_ordinate(lines, units)
   ion <- lines$stage == 2
   x <- lines$Ek + ion * ionization_energy
-  temperature <- 1e4
-  for (iter in seq_len(max_iter)) {
-    y <- y0 - ion * log(saha_factor(temperature, electron_density))
-    slope <- stats::coef(stats::lm(y ~ x))[[2]]
-    if (!is.finite(slope) || slope >= 0) {
-      stop("The Saha-Boltzmann plot has a non-negative slope; check the line data.")
-    }
-    new_temperature <- -1 / (k_boltzmann_ev * slope)
-    converged <- abs(new_temperature - temperature) <= tol * new_temperature
-    temperature <- new_temperature
-    if (converged) break
+  iter <- saha_temperatures(x, y0, ion, electron_density, max_iter, tol)
+  temperature <- iter$temperature
+  if (is.na(temperature)) {
+    stop("The Saha-Boltzmann plot has a non-negative slope; check the line data.")
   }
-  if (!converged) {
+  if (!iter$converged) {
     warning("The temperature did not converge in ", max_iter, " iterations.", call. = FALSE)
   }
   points <- tibble::tibble(x = x, y = y0 - ion * log(saha_factor(temperature, electron_density)),
                           stage = as.integer(lines$stage))
   res <- boltzmann_result(points, method = "Saha-Boltzmann", units = units)
-  res$iterations <- iter
+  res$iterations <- iter$iterations
   res$electron_density <- electron_density
+  res$lines <- tibble::as_tibble(lines)
+  res$settings <- list(ionization_energy = ionization_energy, max_iter = max_iter, tol = tol)
   res
 }
 
@@ -194,6 +195,12 @@ saha_boltzmann <- function(lines, ionization_energy, electron_density, units = "
 #' @param object An object returned by [boltzmann()],
 #'   [saha_boltzmann()] or [cf_libs()].
 #' @param title The plot title. By default, the method and temperature.
+#' @param xlab,ylab The axis titles. Default are the upper-level energy and
+#'   the Boltzmann ordinate.
+#' @param base_size The size of the text, in points. Default is 11.
+#' @param point_size The size of the points of the lines. Default is 2.5.
+#' @param point_alpha The opacity of the points, between 0 and 1. Default is
+#'   1.
 #'
 #' @return A ggplot object.
 #' @seealso [boltzmann()], [saha_boltzmann()]
@@ -215,9 +222,15 @@ saha_boltzmann <- function(lines, ionization_energy, electron_density, units = "
 #' lines <- line_intensities(mean_spectrum, atomic, baseline = TRUE)
 #' plot_boltzmann(saha_boltzmann(lines, ionization_energy = 6.113, electron_density = 1.9e17))
 #'
-plot_boltzmann <- function(object, title = NULL) {
+plot_boltzmann <- function(object, title = NULL, xlab = NULL, ylab = NULL, base_size = 11,
+                           point_size = 2.5, point_alpha = 1) {
+  check_plot_text(title, xlab, ylab, base_size)
+  check_size(point_size, "point_size")
+  check_alpha(point_alpha, "point_alpha")
+  style <- list(xlab = xlab, ylab = ylab, base_size = base_size, point_size = point_size,
+                point_alpha = point_alpha)
   if (inherits(object, "specproc_cflibs")) {
-    return(plot_cf_libs(object, title))
+    return(plot_cf_libs(object, title, style))
   }
   if (!inherits(object, "specproc_boltzmann")) {
     stop("'object' must be returned by boltzmann(), saha_boltzmann() or cf_libs().",
@@ -243,19 +256,23 @@ plot_boltzmann <- function(object, title = NULL) {
   ylab <- as.expression(ylab)
   p <- ggplot2::ggplot(df, ggplot2::aes(x = .data$x, y = .data$y)) +
     ggplot2::geom_abline(intercept = coefs[[1]], slope = coefs[[2]], colour = "grey40") +
-    ggplot2::geom_point(ggplot2::aes(colour = .data$stage), size = 2.5) +
+    ggplot2::geom_point(ggplot2::aes(colour = .data$stage), size = point_size,
+                        alpha = point_alpha) +
     ggplot2::scale_colour_manual(values = c(neutral = "#1b9e77", ion = "#d95f02"), drop = TRUE,
                                  name = NULL) +
-    ggplot2::labs(x = if (object$method == "Saha-Boltzmann") "Upper-level energy (+ ionization energy for ions), eV"
-                  else "Upper-level energy, eV",
-                  y = ylab, title = title) +
-    ggplot2::theme_bw() +
+    ggplot2::labs(x = xlab %||% if (object$method == "Saha-Boltzmann") {
+                    "Upper-level energy (+ ionization energy for ions), eV"
+                  } else {
+                    "Upper-level energy, eV"
+                  },
+                  y = style$ylab %||% ylab, title = title) +
+    ggplot2::theme_bw(base_size = base_size) +
     ggplot2::theme(legend.position = if (length(unique(df$stage)) > 1) "bottom" else "none")
   finish_title(p)
 }
 
 # Parallel Boltzmann (or Saha-Boltzmann) plots of a CF-LIBS fit.
-plot_cf_libs <- function(object, title) {
+plot_cf_libs <- function(object, title, style) {
   saha_plane <- object$method == "saha-boltzmann"
   if (is.null(title)) {
     title <- sprintf("CF-LIBS %s plots: T = %.0f%s K",
@@ -278,12 +295,17 @@ plot_cf_libs <- function(object, title) {
   p <- ggplot2::ggplot(df, ggplot2::aes(x = .data$x, y = .data$y, colour = .data$group)) +
     ggplot2::geom_abline(data = fitted, ggplot2::aes(intercept = .data$intercept, slope = .data$slope,
                                                      colour = .data$group), alpha = 0.6) +
-    ggplot2::geom_point(ggplot2::aes(shape = .data$stage), size = 2.5) +
+    ggplot2::geom_point(ggplot2::aes(shape = .data$stage), size = style$point_size,
+                        alpha = style$point_alpha) +
     ggplot2::scale_shape_manual(values = c(neutral = 16, ion = 17), drop = TRUE) +
-    ggplot2::labs(x = if (saha_plane) "Upper-level energy (+ ionization energy for ions), eV"
-                  else "Upper-level energy, eV",
-                  y = as.expression(ylab), colour = NULL, shape = NULL, title = title) +
-    ggplot2::theme_bw() +
+    ggplot2::labs(x = style$xlab %||% if (saha_plane) {
+                    "Upper-level energy (+ ionization energy for ions), eV"
+                  } else {
+                    "Upper-level energy, eV"
+                  },
+                  y = style$ylab %||% as.expression(ylab), colour = NULL, shape = NULL,
+                  title = title) +
+    ggplot2::theme_bw(base_size = style$base_size) +
     ggplot2::theme(legend.position = "bottom")
   finish_title(p)
 }
@@ -333,6 +355,8 @@ print.specproc_boltzmann <- function(x, ...) {
 #'    laser-induced breakdown spectroscopy: beyond the McWhirter criterion.
 #'    Spectrochimica Acta Part B, 65(1):86-95.
 #'
+#' @seealso [lte_criteria()] for the temporal and spatial criteria of
+#'   Cristoforetti et al. (2010)
 #' @export mcwhirter_criterion
 #'
 #' @examples
@@ -469,6 +493,44 @@ saha_factor <- function(temperature, electron_density) {
   k_b <- 1.380649e-23
   h <- 6.62607015e-34
   2 * (2 * pi * m_e * k_b * temperature / h^2)^1.5 * 1e-6 / electron_density
+}
+
+# Temperatures of Saha-Boltzmann plots, by fixed-point iteration from
+# 10000 K: one plot per column of y0 (the ordinates before the Saha
+# correction of the ions) with its electron density. A plot whose slope is
+# not negative at some iteration gives NA.
+saha_temperatures <- function(x, y0, ion, electron_density, max_iter, tol) {
+  y0 <- as.matrix(y0)
+  n <- ncol(y0)
+  electron_density <- rep_len(electron_density, n)
+  xc <- x - mean(x)
+  sxx <- sum(xc^2)
+  temperature <- rep(1e4, n)
+  iterations <- integer(n)
+  active <- seq_len(n)
+  for (iter in seq_len(max_iter)) {
+    y <- y0[, active, drop = FALSE] -
+      outer(ion, log(saha_factor(temperature[active], electron_density[active])))
+    slope <- colSums(xc * y) / sxx
+    new_temperature <- ifelse(is.finite(slope) & slope < 0, -1 / (k_boltzmann_ev * slope), NA_real_)
+    done <- is.na(new_temperature) |
+      abs(new_temperature - temperature[active]) <= tol * new_temperature
+    temperature[active] <- new_temperature
+    iterations[active] <- iter
+    active <- active[!done]
+    if (length(active) == 0) break
+  }
+  converged <- rep(TRUE, n)
+  converged[active] <- FALSE
+  list(temperature = temperature, converged = converged, iterations = iterations)
+}
+
+# Temperatures of Boltzmann plots, one per column of y; Inf for a plot whose
+# slope is not negative.
+boltzmann_temperatures <- function(x, y) {
+  xc <- x - mean(x)
+  slope <- colSums(xc * as.matrix(y)) / sum(xc^2)
+  ifelse(is.finite(slope) & slope < 0, -1 / (k_boltzmann_ev * slope), Inf)
 }
 
 boltzmann_ordinate <- function(lines, units) {

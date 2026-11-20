@@ -11,7 +11,7 @@
 #'
 #' @details
 #' For a sample \eqn{x} (centered and scaled as in the model), with scores
-#' \eqn{t = xP} on the first \eqn{k} components (loadings \eqn{P},
+#' \eqn{t = xP} on the first \eqn{k} components (`ncomp`; loadings \eqn{P},
 #' variances of the scores \eqn{\lambda}):
 #'  - the **Q contributions** are the residuals \eqn{e = x - tP^T}, whose
 #'    sum of squares is Q (the squared orthogonal distance of robust fits);
@@ -43,7 +43,7 @@
 #'
 #' @param model A [stats::prcomp()] fit, or an object returned by [robpca()],
 #'   [rospca()] or [macropca()].
-#' @param k The number of components. Required for a [stats::prcomp()] fit;
+#' @param ncomp The number of components. Required for a [stats::prcomp()] fit;
 #'   for a robust fit, at most its number of components (the default).
 #' @param statistic `"q"` (default) for the Q contributions, or `"t2"` for
 #'   the \eqn{T^2} contributions.
@@ -60,6 +60,7 @@
 #' @param reference Optional indices or names of rows of `data` whose mean
 #'   contribution is subtracted (relative contributions), or `"regular"`
 #'   for all the regular samples.
+#' @param k `r lifecycle::badge("deprecated")` Use `ncomp`.
 #'
 #' @return A tibble of class `specproc_contributions` with one row per
 #'   sample: `sample` (the row name, or number) and one column per variable.
@@ -80,16 +81,17 @@
 #' minerals <- names(forageLIBS)[3:14]
 #' spectra <- forageLIBS |> dplyr::select(-dplyr::all_of(c(spectra_id, minerals)))
 #' set.seed(1)
-#' fit <- robpca(spectra, k = 3)
+#' fit <- robpca(spectra, ncomp = 3)
 #'
 #' # Q contributions of two outlying samples, relative to the regular ones
 #' q <- contributions(fit, data = spectra, samples = c(49, 127), reference = "regular")
 #' q[, 1:5]
 #'
-contributions <- function(model, k = NULL, statistic = c("q", "t2"), data = NULL, samples = NULL,
-                          reference = NULL) {
+contributions <- function(model, ncomp = NULL, statistic = c("q", "t2"), data = NULL, samples = NULL,
+                          reference = NULL, k = deprecated()) {
+  ncomp <- renamed_arg(k, ncomp, "contributions", "k", "ncomp")
   statistic <- match.arg(statistic)
-  parts <- contribution_parts(model, k, data)
+  parts <- contribution_parts(model, ncomp, data)
   n <- nrow(parts$x)
   ids <- rownames(parts$x) %||% as.character(seq_len(n))
   keep <- if (is.null(samples)) seq_len(n) else contribution_rows(samples, ids, "samples")
@@ -115,7 +117,7 @@ contributions <- function(model, k = NULL, statistic = c("q", "t2"), data = NULL
   colnames(values) <- parts$variables
   out <- tibble::as_tibble(values, .name_repair = "minimal")
   out <- tibble::add_column(out, sample = ids[keep], .before = 1)
-  structure(out, total = unname(total[match(keep, rows)]), statistic = statistic, k = parts$k,
+  structure(out, total = unname(total[match(keep, rows)]), statistic = statistic, ncomp = parts$ncomp,
             reference = if (is.null(reference)) NULL else if (identical(reference, "regular")) "regular" else ids[ref],
             model = model_label(model),
             class = c("specproc_contributions", class(out)))
@@ -153,16 +155,22 @@ contributions <- function(model, k = NULL, statistic = c("q", "t2"), data = NULL
 #' minerals <- forageLIBS |> dplyr::select(3:14) |> names()
 #' spectra <- forageLIBS |> dplyr::select(-dplyr::all_of(c(spectra_id, minerals)))
 #' set.seed(1)
-#' fit <- robpca(spectra, k = 3)
+#' fit <- robpca(spectra, ncomp = 3)
 #' q <- contributions(fit, data = spectra, samples = c(49, 127), reference = "regular")
 #' plot_contributions(q, spectra = spectra)
+#' # the 390-400 nm window: the Ca II H and K lines
+#' plot_contributions(q, spectra = spectra, wavelength = c(390, 400), top = 4)
 #'
 plot_contributions <- function(x, samples = NULL, top = 10, lines = NULL, tol = 0.1,
-                               spectra = NULL, span = 5, interactive = FALSE, title = NULL) {
+                               spectra = NULL, span = 5, interactive = FALSE, title = NULL,
+                               wavelength = NULL, xlab = NULL, ylab = NULL, base_size = 11,
+                               linewidth = 0.3) {
   if (!inherits(x, "specproc_contributions")) {
     stop("'x' must be returned by contributions().", call. = FALSE)
   }
   check_flag(interactive, "interactive")
+  check_plot_text(title, xlab, ylab, base_size)
+  check_size(linewidth, "linewidth")
   total <- attr(x, "total")
   if (is.null(samples)) {
     rows <- order(total, decreasing = TRUE)[seq_len(min(3, nrow(x)))]
@@ -171,12 +179,13 @@ plot_contributions <- function(x, samples = NULL, top = 10, lines = NULL, tol = 
   }
   values <- as.matrix(x[rows, -1, drop = FALSE])
   variables <- colnames(values)
-  wavelength <- names_to_wavelength(variables)
-  has_wavelength <- length(wavelength) == length(variables)
-  if (!has_wavelength) wavelength <- seq_along(variables)
-  parts <- list(variables = variables, wavelength = wavelength, has_wavelength = has_wavelength,
-                segment = if (has_wavelength) wavelength_segments(wavelength) else rep(1L, length(variables)))
+  wl <- names_to_wavelength(variables)
+  has_wavelength <- length(wl) == length(variables)
+  if (!has_wavelength) wl <- seq_along(variables)
+  parts <- list(variables = variables, wavelength = wl, has_wavelength = has_wavelength,
+                segment = if (has_wavelength) wavelength_segments(wl) else rep(1L, length(wl)))
   check_peak_args(top, span, lines, tol, parts)
+  window <- loading_window(wavelength, parts)
 
   statistic <- attr(x, "statistic")
   stat_label <- if (statistic == "q") "Q" else "T\u00b2"
@@ -185,17 +194,18 @@ plot_contributions <- function(x, samples = NULL, top = 10, lines = NULL, tol = 
   curves <- data.frame(
     panel = factor(rep(labels, each = n), levels = labels),
     index = rep(seq_len(n), length(rows)),
-    wavelength = rep(wavelength, length(rows)),
+    wavelength = rep(wl, length(rows)),
     value = as.vector(t(values)),
     segment = rep(parts$segment, length(rows)),
     type = "loadings",
     stringsAsFactors = FALSE
   )
-  peaks <- find_loading_peaks(curves, parts, top, span, lines, tol)
-  background <- if (is.null(spectra)) NULL else loading_background(spectra, parts, curves)
+  peaks <- find_loading_peaks(curves, parts, top, span, lines, tol, window)
+  background <- if (is.null(spectra)) NULL else loading_background(spectra, parts, curves, window)
+  curves <- curves[in_window(curves$wavelength, window), , drop = FALSE]
   if (is.null(title)) {
     reference <- attr(x, "reference")
-    title <- paste0(attr(x, "model"), " ", stat_label, " contributions (", attr(x, "k"),
+    title <- paste0(attr(x, "model"), " ", stat_label, " contributions (", attr(x, "ncomp"),
                     " components)",
                     if (is.null(reference)) "" else if (identical(reference, "regular"))
                       ", relative to the regular samples" else
@@ -203,12 +213,13 @@ plot_contributions <- function(x, samples = NULL, top = 10, lines = NULL, tol = 
                              paste(utils::head(reference, 5), collapse = ", "),
                              if (length(reference) > 5) ", ..."))
   }
-  x_lab <- if (has_wavelength) "Wavelength (nm)" else "Variable"
-  y_lab <- "Contribution"
+  style <- list(x_lab = xlab %||% if (has_wavelength) "Wavelength (nm)" else "Variable",
+                y_lab = ylab %||% "Contribution", title = title, base_size = base_size,
+                linewidth = linewidth)
   if (interactive) {
-    plot_loadings_plotly(curves, peaks, background, x_lab, y_lab, title)
+    plot_loadings_plotly(curves, peaks, background, style)
   } else {
-    plot_loadings_ggplot(curves, peaks, background, parts, x_lab, y_lab, title)
+    plot_loadings_ggplot(curves, peaks, background, parts, style)
   }
 }
 
@@ -216,7 +227,7 @@ plot_contributions <- function(x, samples = NULL, top = 10, lines = NULL, tol = 
 print.specproc_contributions <- function(x, ...) {
   stat_label <- if (attr(x, "statistic") == "q") "Q" else "T-squared"
   cat("# ", stat_label, " contributions of ", nrow(x), " sample(s) to ", ncol(x) - 1,
-      " variables (", attr(x, "k"), " components)", sep = "")
+      " variables (", attr(x, "ncomp"), " components)", sep = "")
   if (!is.null(attr(x, "reference"))) cat(", relative to reference samples")
   cat("\n")
   print(tibble::as_tibble(unclass_contributions(x)), ...)
@@ -226,19 +237,19 @@ print.specproc_contributions <- function(x, ...) {
 # ---- internals ---------------------------------------------------------------
 
 unclass_contributions <- function(x) {
-  attributes(x)[c("total", "statistic", "k", "reference", "model")] <- NULL
+  attributes(x)[c("total", "statistic", "ncomp", "reference", "model")] <- NULL
   class(x) <- setdiff(class(x), "specproc_contributions")
   x
 }
 
 # Preprocessed data, loadings, score variances and variables of a model.
-contribution_parts <- function(model, k, data) {
+contribution_parts <- function(model, ncomp, data) {
   if (inherits(model, "prcomp")) {
     rank <- ncol(model$x)
-    if (is.null(k)) stop("'k' is required for a prcomp fit.", call. = FALSE)
-    check_count(k, "k")
-    if (k >= rank) {
-      stop("'k' must be smaller than the number of components (", rank, ").", call. = FALSE)
+    if (is.null(ncomp)) stop("'ncomp' is required for a prcomp fit.", call. = FALSE)
+    check_count(ncomp, "ncomp")
+    if (ncomp >= rank) {
+      stop("'ncomp' must be smaller than the number of components (", rank, ").", call. = FALSE)
     }
     variables <- rownames(model$rotation) %||% paste0("V", seq_len(nrow(model$rotation)))
     if (is.null(data)) {
@@ -256,12 +267,12 @@ contribution_parts <- function(model, k, data) {
         check_calibration_match(x %*% model$rotation[, 1, drop = FALSE], model$x[, 1])
       }
     }
-    loadings <- model$rotation[, seq_len(k), drop = FALSE]
-    variance <- model$sdev[seq_len(k)]^2
+    loadings <- model$rotation[, seq_len(ncomp), drop = FALSE]
+    variance <- model$sdev[seq_len(ncomp)]^2
   } else if (inherits(model, "specproc_robpca")) {
-    if (is.null(k)) k <- model$k
-    check_count(k, "k")
-    if (k > model$k) stop("'k' must be at most ", model$k, ".", call. = FALSE)
+    if (is.null(ncomp)) ncomp <- model$ncomp
+    check_count(ncomp, "ncomp")
+    if (ncomp > model$ncomp) stop("'ncomp' must be at most ", model$ncomp, ".", call. = FALSE)
     variables <- attr(model, "variables") %||% rownames(model$loadings)
     if (is.null(data)) {
       if (is.null(model$imputed)) {
@@ -276,14 +287,14 @@ contribution_parts <- function(model, k, data) {
     if (!is.null(data) && nrow(x) == length(model$od)) {
       check_calibration_match(orthogonal_distance(x, model$loadings), model$od)
     }
-    loadings <- model$loadings[, seq_len(k), drop = FALSE]
-    variance <- model$eigenvalues[seq_len(k)]
+    loadings <- model$loadings[, seq_len(ncomp), drop = FALSE]
+    variance <- model$eigenvalues[seq_len(ncomp)]
   } else {
     stop("'model' must be a prcomp fit or returned by robpca(), rospca() or macropca().",
          call. = FALSE)
   }
   list(x = x, raw = if (inherits(model, "prcomp") && !is.null(data)) raw else NULL,
-       loadings = unname(loadings), variance = variance, k = as.integer(k),
+       loadings = unname(loadings), variance = variance, ncomp = as.integer(ncomp),
        variables = variables, calibration = is.null(data))
 }
 
@@ -327,7 +338,7 @@ contribution_values <- function(parts, statistic, rows) {
 # q_residuals() for a prcomp fit.
 contribution_regular <- function(model, parts) {
   if (inherits(model, "prcomp")) {
-    q_residuals(model, parts$k, newdata = parts$raw)$outlier == "regular"
+    q_residuals(model, parts$ncomp, newdata = parts$raw)$outlier == "regular"
   } else if (parts$calibration) {
     model$outlier_type == "regular"
   } else {

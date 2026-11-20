@@ -28,13 +28,26 @@ wl <- as.numeric(names(spectra))
 ## ----spectra, fig.height = 3.5------------------------------------------------
 forageLIBS |>
   slice(1:3) |>
-  select(Measurement, all_of(names(spectra)[wl > 400 & wl < 410])) |>
-  plot_spectra(id = Measurement)
+  select(-Sample, -all_of(minerals)) |>
+  plot_spectra(id = Measurement, wavelength = c(400, 460), offset = 10000) +
+  scale_x_continuous(breaks = seq(400, 460, 5))
 
 ## ----identify, eval = FALSE---------------------------------------------------
 # candidates <- libs_lines(c("K I", "Ca I", "Fe I", "Mn I"), wavelength = c(400, 410))
 # plot_lines(colMeans(spectra), candidates)
-# line_finder(spectra)
+# fit <- line_finder(spectra)
+
+## ----cn-bands, fig.height = 3.5-----------------------------------------------
+cn <- molecular_bands("CN", wavelength = c(383, 390))
+cn |>
+  select(v_upper, v_lower, wavelength, degraded, fcf, relative_intensity) |>
+  mutate(across(where(is.double), \(x) round(x, 3))) |>
+  as.data.frame()
+plot_lines(colMeans(spectra), bands = cn, wavelength = c(383, 390), interactive = FALSE)
+
+## ----cn-spectrum, eval = FALSE------------------------------------------------
+# cn_model <- molecular_spectrum("CN", temperature = 6000, wavelength = c(383, 390),
+#                                resolution = 0.1)
 
 ## ----calibration--------------------------------------------------------------
 first_detector <- spectra[seq_len(which(diff(wl) < 0)[1])]
@@ -51,7 +64,7 @@ plot_wavelength_calibration(wavecal)
 
 ## ----corrected----------------------------------------------------------------
 calibrated <- apply_calibration(first_detector, wavecal)
-corrected <- baseline_arpls(calibrated, lambda = 1e5, max.iter = 20)$correction
+corrected <- baseline_arpls(calibrated, lambda = 1e5, max_iter = 20)$correction
 wl_corrected <- as.numeric(names(corrected))
 mean_spectrum <- colMeans(corrected)
 
@@ -92,6 +105,35 @@ c(voigt = AIC(k_voigt$fit[[1]]), gaussian = AIC(k_gauss$fit[[1]]))
 
 ## ----doublet-plot, fig.height = 5---------------------------------------------
 plot_fit(k_gauss, title = "K I 404.41 and 404.72 nm, Gaussian profiles")
+
+## ----doublet-locked-----------------------------------------------------------
+k_locked <- multipeak_fit(doublet, peaks = c(404.414, 404.721), profiles = "gaussian",
+                          lock_centers = TRUE, share_widths = TRUE)
+k_locked$tidied[[1]]
+
+## ----doublet-numbers, include = FALSE-----------------------------------------
+term_of <- \(fit, term, column = "estimate") {
+  t <- fit$tidied[[1]]
+  t[[column]][t$term == term]
+}
+free_separation <- term_of(k_gauss, "xc_2") - term_of(k_gauss, "xc_1")
+locked_ratio <- term_of(k_locked, "A_1") / term_of(k_locked, "A_2")
+thin_ratio <- (4 * 1.15e6 / 404.414) / (2 * 1.07e6 / 404.721)
+
+## ----fixed-width--------------------------------------------------------------
+x <- seq(395.5, 396.5, by = 0.02)
+set.seed(1)
+y <- voigt_profile(x, y0 = 50, xc = 396.15, wG = 0.08, wL = 0.04, A = 100) +
+  rnorm(length(x), sd = 5)
+al_line <- as_tibble(as.list(set_names(y, x)))
+w_gauss <- sqrt(0.08^2 + doppler_width(396.15, temperature = 9000, mass = "Al")^2)
+w_gauss
+
+free <- peak_fit(al_line, profile = "voigt")$tidied[[1]]
+fixed <- peak_fit(al_line, profile = "voigt", wG = w_gauss, fixed = "wG")$tidied[[1]]
+bind_rows(free = free, fixed = fixed, .id = "fit") |>
+  filter(term %in% c("wG", "wL")) |>
+  select(fit, term, estimate, std.error)
 
 ## ----batch, warning = FALSE---------------------------------------------------
 doublets <- bind_cols(

@@ -71,10 +71,14 @@ relative number \code{density} and whether it was \code{observed};
 abscissa of ions includes the ionization energy and the ordinate the
 Saha correction), \code{intercept}, the intercept of each plot, and \code{fit},
 the \code{lm} fit;
-\item \code{method} and the number of \code{iterations} of the Saha-Boltzmann fit.
+\item \code{method} and the number of \code{iterations} of the Saha-Boltzmann fit;
+\item \code{lines}, the lines of the fit, and \code{settings}, its other arguments.
 }
 
-Use \code{\link[=plot_boltzmann]{plot_boltzmann()}} to draw the Boltzmann plots.
+Use \code{\link[=plot_boltzmann]{plot_boltzmann()}} to draw the Boltzmann plots, and
+\code{\link[=plasma_uncertainty]{plasma_uncertainty()}} to propagate the uncertainties of the
+intensities, of the atomic data and of the electron density to the
+temperature and the composition.
 }
 \description{
 Estimates the elemental composition of a sample from the intensities of
@@ -132,7 +136,8 @@ The mass fractions are computed from the atomic fractions with the
 standard atomic weights. The result is only as good as its assumptions:
 all major elements must be measured (with closure), the lines must be
 optically thin (see \code{\link[=self_absorption]{self_absorption()}}), the intensities corrected for
-the spectral response of the instrument, and the atomic data accurate
+the spectral response of the instrument (see \code{\link[=response_calibration]{response_calibration()}}),
+and the atomic data accurate
 (prefer lines of accuracy B or better in \code{\link[=nist_lines]{nist_lines()}}).
 }
 \examples{

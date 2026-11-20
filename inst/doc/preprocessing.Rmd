@@ -1,8 +1,8 @@
 ---
-title: "2. Preprocessing with recipe steps"
+title: "Preprocessing with recipe steps"
 output: rmarkdown::html_vignette
 vignette: >
-  %\VignetteIndexEntry{2. Preprocessing with recipe steps}
+  %\VignetteIndexEntry{Preprocessing with recipe steps}
   %\VignetteEngine{knitr::rmarkdown}
   %\VignetteEncoding{UTF-8}
 ---
@@ -80,7 +80,7 @@ cuts into the lines; too large, it misses the curvature of the continuum.
 ```{r baseline, fig.height = 3.5}
 region <- wl > 276 & wl < 290
 fitted_baselines <- map(c(`1e3` = 1e3, `1e5` = 1e5, `1e7` = 1e7), \(lambda) {
-  unlist(baseline_arpls(spectra[1, ], lambda = lambda, max.iter = 20)$background)[region]
+  unlist(baseline_arpls(spectra[1, ], lambda = lambda, max_iter = 20)$background)[region]
 })
 first_spectrum <- tibble(wavelength = wl[region], counts = unlist(spectra[1, region]))
 
@@ -103,7 +103,7 @@ range of `baseline_lambda()`).
 
 ```{r step-baseline}
 corrected <- base |>
-  step_baseline(all_predictors(), lambda = 1e5, options = list(max.iter = 20))
+  step_baseline(all_predictors(), lambda = 1e5, options = list(max_iter = 20))
 ```
 
 `step_baseline()` corrects each spectrum on its own and estimates nothing
@@ -172,11 +172,11 @@ than the normalization factor.
 
 | Purpose | Steps |
 |---|---|
-| Smoothing, derivatives | `step_savgol()` |
-| Compression | `step_wavelet()` (wavelet coefficients), `step_line_intensities()` (line intensities) |
+| Smoothing, derivatives | `step_savgol()`, `step_wavelet_denoise()` (wavelet denoising), `step_gap_derivative()` (gap-segment derivative) |
+| Compression | `step_bin_spectra()` (means of adjacent channels), `step_wavelet()` (wavelet coefficients), `step_line_intensities()` (line intensities) |
 | Scaling | `step_pareto_scale()`, `step_poisson_scale()` |
 | Removing unwanted variation | `step_epo()`, `step_glsw()`, `step_osc()`, `step_direct_osc()`, `step_projected_osc()`, `step_opls()`, `step_o2pls()`, `step_y_gradient_glsw()` |
-| Robust transformations | `step_robust_bcyj()`, `step_robpca()`, `step_rospca()`, `step_macropca()`, `step_cellpca()` |
+| Robust transformations, PCA and PLS | `step_robust_boxcox()`, `step_robust_yeojohnson()`, `step_robust_gandh()`, `step_robpca()`, `step_rospca()`, `step_macropca()`, `step_cellpca()`, `step_rsimpls()` |
 | Replicate shots | `step_reject_shots()` |
 
 For example, `step_wavelet()` keeps the approximation coefficients of a

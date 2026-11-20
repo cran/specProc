@@ -46,6 +46,17 @@ check_flag <- function(x, arg) {
   invisible(x)
 }
 
+# For the functions of a single variable: stops unless `x` is a numeric vector
+# or a 1-d array (such as the result of tapply()). A matrix is not pooled into
+# one result; the message shows how to get one result per column.
+check_numeric_vector <- function(x, fn) {
+  if (!is.numeric(x) || length(dim(x)) > 1) {
+    stop("The input 'x' must be a numeric vector; for the columns of a data frame or matrix, ",
+         "use sapply(x, ", fn, ") or apply(x, 2, ", fn, ").", call. = FALSE)
+  }
+  invisible(x)
+}
+
 check_number <- function(x, arg, lower = -Inf, upper = Inf, lower_open = FALSE, upper_open = FALSE) {
   ok <- is.numeric(x) && length(x) == 1 && !is.na(x) &&
     (if (lower_open) x > lower else x >= lower) &&
@@ -77,11 +88,6 @@ preprocess <- function(x, center = TRUE, scale = FALSE) {
 
 apply_preprocess <- function(x, pp) {
   sweep(sweep(x, 2, pp$center, "-"), 2, pp$scale, "/")
-}
-
-# Medcouple without the robustbase start-up message about 'doScale'.
-medcouple <- function(x) {
-  robustbase::mc(x[!is.na(x)], doScale = FALSE)
 }
 
 # Runs `expr` with a fixed RNG seed and restores the caller's RNG state.
@@ -117,10 +123,67 @@ names_to_wavelength <- function(nms) {
   if (anyNA(wl)) NULL else wl
 }
 
+# Column indices of the detector segments of a spectral axis (see
+# wavelength_segments()): one segment of all `n` columns when `segments` is
+# FALSE or the names `nms` are not all wavelengths.
+segment_columns <- function(nms, segments, n = length(nms)) {
+  idx <- seq_len(n)
+  if (segments && !is.null(nms) && n > 2) {
+    wl <- parse_wavelength(nms)
+    if (!anyNA(wl)) return(unname(split(idx, wavelength_segments(wl))))
+  }
+  list(idx)
+}
+
 # Column medians, in C++ (as apply(x, 2, stats::median, na.rm = na.rm), with
 # the column names).
 col_medians <- function(x, na.rm = FALSE) {
   if (!is.matrix(x)) x <- as.matrix(x)
   storage.mode(x) <- "double"
   stats::setNames(col_medians_cpp(x, na.rm), colnames(x))
+}
+
+# Downloads 'url' to 'file' from an online database (NIST ASD, STARK-B). A
+# busy server (HTTP 5xx, such as 504 Gateway Timeout) is tried again after
+# 'wait' seconds, up to 'attempts' times. The error gives the HTTP status,
+# which download.file() reports after a less telling warning ("downloaded
+# length 0 != reported length ..."). 'timeout' replaces the option `timeout`
+# for the download, so that a server that does not answer is given up on
+# after that time.
+download_data <- function(url, file, database, label, timeout, attempts = 3, wait = 5) {
+  old <- options(timeout = timeout)
+  on.exit(options(old), add = TRUE)
+  for (i in seq_len(attempts)) {
+    problems <- character()
+    withCallingHandlers(
+      tryCatch(download_file(url, file), error = function(e) {
+        problems <<- c(problems, conditionMessage(e))
+      }),
+      warning = function(w) {
+        problems <<- c(problems, conditionMessage(w))
+        invokeRestart("muffleWarning")
+      }
+    )
+    if (length(problems) == 0 && file.exists(file) && file.size(file) > 0) {
+      return(invisible(file))
+    }
+    http <- regmatches(problems, regexpr("HTTP status was '[^']*'", problems))
+    reason <- if (length(http) > 0) {
+      sub("HTTP status was '([^']*)'", "HTTP status \\1", http[1])
+    } else if (length(problems) > 0) {
+      problems[1]
+    } else {
+      "empty response"
+    }
+    if (!startsWith(reason, "HTTP status 5") || i == attempts) {
+      break
+    }
+    Sys.sleep(wait)
+  }
+  stop("Could not download ", database, " data for ", label, " (", reason, "). ",
+       "Check the internet connection, or try again later.", call. = FALSE)
+}
+
+download_file <- function(url, file) {
+  utils::download.file(url, file, quiet = TRUE, mode = "wb")
 }
